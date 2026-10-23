@@ -104,6 +104,14 @@ block, then explain it in Korean.
 | binding quote는 영어 원문 + 한국어 설명 | CFR 문장을 의역해 인용 |
 | `2026-10-23` | `2026년 10월 23일` (본문 서술은 가능, 표는 ISO) |
 | 사용자 언어를 따름 | 한국어 사용자에게 영어 메모를 그대로 반환 |
+| 뜻을 살려 한국어로 다시 씀 | 영어 문장 구조를 그대로 옮김 |
+| "무엇을/누구에게/어떻게" 표로 비교 | "intended use가 같고 기술적 특성이 비슷하면" |
+
+자연스러운 문장 규칙은 `references/korean-style.md`에 정리되어 있다.
+
+초심자에게 `predicate`, `intended use`, `technological characteristics`,
+`pathway`를 설명 없이 쓰지 않는다. `references/beginner-mode.md`의
+"추상어를 쓰지 않는 방법"을 따른다.
 
 ## Memo file name
 

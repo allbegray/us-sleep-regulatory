@@ -1,5 +1,33 @@
 # Changelog
 
+## 1.11.3 — 2026-10-23
+
+- Beginner mode now requires Korean role names, not English labels. Sentences
+  and tables must say "병원 대신 환자정보를 다루는 업체" instead of
+  "business associate", and "우리가 다시 맡기는 업체" instead of
+  "subcontractor BA". English is allowed only in parentheses after the Korean.
+- Added the role-name table to `beginner-mode.md` and `korean-style.md`, plus a
+  bad/good example and a self-check item.
+- Documentation/behavior fix; no CLI change.
+
+## 1.11.2 — 2026-10-23
+
+- Added `references/korean-style.md`: 40 translationese patterns, before/after
+  examples, a read-aloud check, and a rule against noun-heavy report prose.
+- Beginner mode now requires natural Korean and uses the "해요" register. The
+  self-check includes "does it sound natural when read aloud?"
+- `SKILL.md`, `output-language.md`, and `beginner-mode.md` cross-reference the
+  style guide. This is a documentation/behavior fix; no CLI change.
+
+## 1.11.1 — 2026-10-23
+
+- Beginner mode now forbids unexplained abstractions. Instead of "intended use가
+  같고 기술적 특성이 비슷하면 가능합니다", the skill must compare **무엇을 /
+  누구에게 / 어떻게 / 주장** in a table, with a concrete same/different verdict.
+- Added a bad/good example for predicate fit and a pre-send checklist to
+  `references/beginner-mode.md`; `output-language.md` cross-references the rule.
+- This is a documentation/behavior fix; no CLI contract change.
+
 ## 1.11.0 — 2026-10-23
 
 - Added a language policy: the skill answers in the user's language. Korean

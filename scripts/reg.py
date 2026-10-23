@@ -58,7 +58,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, Callable
 
-VERSION = "1.11.0"
+VERSION = "1.11.3"
 OUTPUT_LANG = os.environ.get("US_REG_LANG", "en").strip().lower()
 SKILL_DIR = Path(__file__).resolve().parent.parent
 CACHE_DIR = Path(os.environ.get("US_REG_CACHE", Path.home() / ".cache" / "us-sleep-regulatory"))

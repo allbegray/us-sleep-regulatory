@@ -29,6 +29,10 @@ regulatory, or asks "why do I need this?" — use **beginner mode**: decision
 first, every acronym expanded, a plain-language glossary, and a "what you do
 not need to worry about yet" section. See `references/beginner-mode.md`.
 
+Write natural Korean, not a translation. Avoid "~에 따라 달라집니다",
+"~하는 것이 가능합니다", and noun-heavy report prose. See
+`references/korean-style.md`.
+
 ## Query pipeline (non-English users)
 
 1. Detect the user's language.
@@ -292,6 +296,7 @@ assumption, and knows the next decision.
 | `references/output-language.md` | Korean output conventions, heading map, and glossary |
 | `references/beginner-mode.md` | Plain-language mode for users new to US regulatory |
 | `references/query-pipeline.md` | Korean question → English retrieval → Korean answer |
+| `references/korean-style.md` | Natural Korean: translationese patterns and before/after |
 | `examples/example-memo-dtc-cbti.md` | Worked example of the memo format (synthetic product; not evidence) |
 | `knowledge/seed/` | Offline CFR, classification, 510(k), FR seed documents |
 | `scripts/reg.py` | Unified CLI + local knowledge base |

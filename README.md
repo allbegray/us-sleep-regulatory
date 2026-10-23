@@ -479,13 +479,13 @@ Or use a release artifact:
 
 ```bash
 ./install.sh \
-  --from https://github.com/allbegray/us-sleep-regulatory/releases/download/v1.11.0/us-sleep-regulatory-v1.11.0.tar.gz \
+  --from https://github.com/allbegray/us-sleep-regulatory/releases/download/v1.11.3/us-sleep-regulatory-v1.11.3.tar.gz \
   --target all --force
 ```
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\install.ps1 `
-  -From https://github.com/allbegray/us-sleep-regulatory/releases/download/v1.11.0/us-sleep-regulatory-v1.11.0.zip `
+  -From https://github.com/allbegray/us-sleep-regulatory/releases/download/v1.11.3/us-sleep-regulatory-v1.11.3.zip `
   -Target all -Force
 ```
 
@@ -495,16 +495,16 @@ Release artifacts ship with `SHA256SUMS`. `install.sh --sha256` and
 `install.ps1 -Sha256` verify the archive before extracting it.
 
 ```bash
-SHA="$(curl -fsSL https://github.com/allbegray/us-sleep-regulatory/releases/download/v1.11.0/SHA256SUMS | awk '/tar.gz/{print $1}')"
+SHA="$(curl -fsSL https://github.com/allbegray/us-sleep-regulatory/releases/download/v1.11.3/SHA256SUMS | awk '/tar.gz/{print $1}')"
 ./install.sh \
-  --from https://github.com/allbegray/us-sleep-regulatory/releases/download/v1.11.0/us-sleep-regulatory-v1.11.0.tar.gz \
+  --from https://github.com/allbegray/us-sleep-regulatory/releases/download/v1.11.3/us-sleep-regulatory-v1.11.3.tar.gz \
   --target all --sha256 "$SHA"
 ```
 
 ```powershell
 $SHA = (Get-Content .\SHA256SUMS | Select-String '\.zip').Line.Split()[0]
 powershell -ExecutionPolicy Bypass -File .\install.ps1 `
-  -From .\us-sleep-regulatory-v1.11.0.zip -Target all -Sha256 $SHA
+  -From .\us-sleep-regulatory-v1.11.3.zip -Target all -Sha256 $SHA
 ```
 
 ### What an update preserves
