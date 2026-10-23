@@ -13,24 +13,26 @@ curated guidance index, and a memo format that keeps the retrieval trail.
 
 1. **Two tracks, separately.** FDA device status and HIPAA/privacy status are
    independent. Answer both. A 510(k) clearance is not HIPAA compliance.
-2. **Claims drive the pathway.** The intended use and every marketing claim
+2. **Local first.** Default to the local knowledge base (`kb stats`, `kb search`,
+   `kb get`). Live APIs are for `kb refresh` or when the KB is missing or stale.
+3. **Claims drive the pathway.** The intended use and every marketing claim
    decide whether the software is a device. Read the claims before naming a
    product code or predicate.
-3. **Cite or label.** Every legal/regulatory statement carries a source URL, a
+4. **Cite or label.** Every legal/regulatory statement carries a source URL, a
    retrieval date, and a status: Binding / Final guidance / Draft / Proposed /
    Discussion paper / Data / Assumption. If you could not retrieve it, say so.
-4. **Binding beats guidance.** 21 CFR and 45 CFR are binding. FDA guidance is
+5. **Binding beats guidance.** 21 CFR and 45 CFR are binding. FDA guidance is
    nonbinding. A draft, discussion paper, or enforcement-discretion policy is
    not a requirement.
-5. **Verify status, not just the URL.** FDA pages get archived, superseded, and
+6. **Verify status, not just the URL.** FDA pages get archived, superseded, and
    redirected. The local registry is an index, not proof of current status. Open
    the page or the Federal Register notice when the answer matters.
-6. **A product code is not a predicate.** Predicate analysis is intended use +
+7. **A product code is not a predicate.** Predicate analysis is intended use +
    technological characteristics. A clearance under the same code can still be
    unusable.
-7. **Do not invent.** No invented K numbers, guidance dates, CFR sections, or
+8. **Do not invent.** No invented K numbers, guidance dates, CFR sections, or
    "FDA approved" claims. 510(k) devices are "cleared," not "approved."
-8. **Not legal advice.** For a filing decision, a novel intended use, a De Novo,
+9. **Not legal advice.** For a filing decision, a novel intended use, a De Novo,
    or a breach response, recommend regulatory counsel.
 
 ## Workflow
@@ -76,43 +78,70 @@ Read `references/device-pathway.md`. Produce a one-page decision table:
 **Completion:** a recommendation with the fact that would change it, and no
 "it depends" without naming the resolving fact.
 
-### Step 3 — Retrieve the evidence
+### Step 3 — Retrieve the evidence (local first)
 
-Run the CLI from anywhere. The skill loader prints this skill's base directory;
-set it once (substitute the absolute path):
+The skill ships with a local SQLite knowledge base seeded from `references/`,
+the guidance registry, and `knowledge/seed/`. It answers most questions without
+a network call.
 
 ```bash
 SKILL_DIR="/absolute/path/to/us-sleep-regulatory"
 REG="$SKILL_DIR/scripts/reg.py"
-python3 "$REG" doctor
 
-# Device landscape and predicates
+python3 "$REG" kb stats
+python3 "$REG" kb search "QVO predicate chronic insomnia"
+python3 "$REG" kb get cfr-21-882.5801
+```
+
+Use live commands only when:
+
+- `kb search` has no useful hit,
+- `kb stats` or `kb stale` shows the relevant entry is stale,
+- the user asks for current or "latest" data,
+- the question depends on a fast-moving source (new guidance, new clearance).
+
+Refresh the local copy:
+
+```bash
+python3 "$REG" kb refresh              # CFR, classifications, 510(k), FR
+python3 "$REG" kb refresh --extended   # + FR search, trials, PubMed
+python3 "$REG" kb refresh --summaries  # + 510(k) summary PDFs (needs extractor)
+```
+
+| Content | TTL | Refresh |
+|---|---|---|
+| CFR sections | 90 days | `kb refresh` |
+| Classifications / 510(k) | 30 days | `kb refresh` |
+| Guidance registry | 30 days | `kb refresh` |
+| Federal Register | 30 days | `kb refresh` |
+| Trials / PubMed | 30 days | `kb refresh --extended` |
+| 510(k) summaries | 90 days | `kb refresh --summaries` |
+
+Live commands, when the KB is insufficient:
+
+```bash
 python3 "$REG" predicates --product-code QVO
-python3 "$REG" 510k-search --product-code QVO
 python3 "$REG" 510k-get K191716 --fetch-summary
-python3 "$REG" classify --product-code QVO
-
-# Binding rules
 python3 "$REG" cfr 21 882.5801
-python3 "$REG" cfr 45 164.308
-python3 "$REG" cfr 16 318
-
-# Guidance and rulemaking
-python3 "$REG" guidance --topic device
-python3 "$REG" guidance --query "software"
 python3 "$REG" fr-search --term '"software as a medical device"' --agency fda --since 2024-01-01
-
-# Clinical evidence
 python3 "$REG" trials --condition insomnia --intervention "cognitive behavioral therapy"
 python3 "$REG" pubmed --term "digital CBT-I insomnia randomized" --limit 10
-
-# Dated bundle
 python3 "$REG" snapshot
+```
+
+After the research session, save the durable conclusion and citations:
+
+```bash
+python3 "$REG" kb note add "QVO is prescription-only; DTC model is a fit gap." \
+  --title "QVO vs DTC" --tags "device,qvo,strategy" \
+  --source "https://www.ecfr.gov/current/title-21/section-882.5801"
+python3 "$REG" kb export --format md --out snapshots/knowledge.md
 ```
 
 **Completion:** each conclusion has a source URL + `retrieved_at`; at least one
 binding source for each legal conclusion; guidance status checked against the
-official page when the registry is stale or the stakes are high.
+official page when the registry is stale or the stakes are high. The conclusion
+is saved as a KB note or export, not just left in chat.
 
 ### Step 4 — HIPAA/privacy track
 
@@ -150,10 +179,10 @@ assumption, and knows the next decision.
 
 | User asks | Do this |
 |---|---|
-| "Do we need a 510(k)?" | Intake + device triage + `predicates` + `510k-get` |
-| "Find predicates" | `predicates --product-code QVO`, then read each summary |
-| "Is this HIPAA?" | HIPAA track, starting with the billing/contracts fact |
-| "What does FDA say about AI?" | `guidance --topic ai`, `fr-search`, read the AI references |
+| "Do we need a 510(k)?" | Intake + device triage + `kb search "QVO predicate"` + live `predicates` only if stale |
+| "Find predicates" | `kb search "QVO predicate"` then `kb get 510k-K191716` / `kb get 510k-K233577` |
+| "Is this HIPAA?" | HIPAA track + `kb search "HIPAA covered entity BAA"` |
+| "What does FDA say about AI?" | `kb search "AI PCCP lifecycle"`, then `kb refresh` if stale |
 | "What changed recently?" | `guidance --max-age-days 30`, `fr-search --since ...`, `snapshot` |
 | "Build a regulatory snapshot" | `python3 "$REG" snapshot` |
 | "Review our draft claims" | Claims matrix + device/wellness/CDS boundary |
@@ -166,8 +195,10 @@ assumption, and knows the next decision.
   `accessdata.fda.gov` for 510(k) PDFs.
 - `openFDA` works without a key at 240 req/min and 1,000/day. Set
   `OPENFDA_API_KEY` for heavier use.
-- The cache is `~/.cache/us-sleep-regulatory` (24h default). Use `--no-cache`
-  when freshness matters.
+- The local KB is `~/.cache/us-sleep-regulatory/kb.sqlite`. Set `US_REG_KB` to
+  move it. `kb search`/`kb get` are offline; `kb refresh` is the network path.
+- The HTTP cache is `~/.cache/us-sleep-regulatory` (24h default). Use
+  `--no-cache` when freshness matters.
 - `--fetch-summary` downloads the 510(k) PDF. If no PDF text extractor is
   installed, install `pypdf` (`python3 -m pip install pypdf`) or poppler
   (`pdftotext`), or use the agent's PDF reader on the downloaded file.
@@ -184,7 +215,8 @@ assumption, and knows the next decision.
 | `references/sleep-domain.md` | CBT-I, endpoints, predicates, trial design, safety |
 | `references/guidance-registry.json` | Curated guidance index with last-verified dates |
 | `references/memo-template.md` | Auditable memo and claims matrix |
-| `scripts/reg.py` | Unified CLI for all sources |
+| `knowledge/seed/` | Offline CFR, classification, 510(k), FR seed documents |
+| `scripts/reg.py` | Unified CLI + local knowledge base |
 | `scripts/mcp_server.py` | Optional stdio MCP server |
 
 ## Stop conditions

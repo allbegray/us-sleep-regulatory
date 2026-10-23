@@ -28,6 +28,65 @@ Install once, then trigger it with `/us-sleep-regulatory` or
 > Codex custom `/prompts:*` are deprecated. Use `$us-sleep-regulatory` in Codex.
 > Claude Code and OpenCode use `/us-sleep-regulatory`.
 
+### Local knowledge base first
+
+The skill ships with a **SQLite + FTS5** knowledge base seeded from
+`references/`, the guidance registry, and `knowledge/seed/`. The first `kb`
+command initializes it offline; no network call is needed.
+
+```bash
+REG="$HOME/.agents/skills/us-sleep-regulatory/scripts/reg.py"
+python3 "$REG" kb stats
+python3 "$REG" kb search "QVO predicate chronic insomnia"
+python3 "$REG" kb get cfr-21-882.5801
+```
+
+Windows:
+
+```powershell
+$REG = "$env:USERPROFILE\.agents\skills\us-sleep-regulatory\scripts\reg.py"
+py -3 $REG kb stats
+py -3 $REG kb search "QVO predicate chronic insomnia"
+py -3 $REG kb get cfr-21-882.5801
+```
+
+Call live APIs only when:
+
+- the local KB has no useful hit,
+- `kb stats` / `kb stale` shows the entry is stale,
+- the user asks for current or "latest" data,
+- the question depends on a fast-moving source (new guidance, new clearance).
+
+Refresh the local copy:
+
+```bash
+python3 "$REG" kb refresh              # CFR, classifications, 510(k), FR
+python3 "$REG" kb refresh --extended   # + FR search, trials, PubMed
+python3 "$REG" kb refresh --summaries  # + 510(k) summary PDFs
+```
+
+Save durable conclusions after a session:
+
+```bash
+python3 "$REG" kb note add "QVO is prescription-only; DTC model is a fit gap." \
+  --title "QVO vs DTC" --tags "device,qvo,strategy" \
+  --source "https://www.ecfr.gov/current/title-21/section-882.5801"
+python3 "$REG" kb export --format md --out snapshots/knowledge.md
+```
+
+| Content | TTL | Refresh |
+|---|---|---|
+| CFR | 90 days | `kb refresh` |
+| Classifications / 510(k) | 30 days | `kb refresh` |
+| Guidance registry | 30 days | `kb refresh` |
+| Federal Register | 30 days | `kb refresh` |
+| Trials / PubMed | 30 days | `kb refresh --extended` |
+| 510(k) summaries | 90 days | `kb refresh --summaries` |
+
+> Search in English technical terms (`QVO predicate`, `HIPAA BAA`, `PCCP`) for
+> the best results. The agent can translate Korean questions into English
+> search terms.
+
 ### Codex CLI
 
 1. Restart Codex.
@@ -337,13 +396,13 @@ Or use a release artifact:
 
 ```bash
 ./install.sh \
-  --from https://github.com/allbegray/us-sleep-regulatory/releases/download/v1.2.0/us-sleep-regulatory-v1.2.0.tar.gz \
+  --from https://github.com/allbegray/us-sleep-regulatory/releases/download/v1.3.0/us-sleep-regulatory-v1.3.0.tar.gz \
   --target all --force
 ```
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\install.ps1 `
-  -From https://github.com/allbegray/us-sleep-regulatory/releases/download/v1.2.0/us-sleep-regulatory-v1.2.0.zip `
+  -From https://github.com/allbegray/us-sleep-regulatory/releases/download/v1.3.0/us-sleep-regulatory-v1.3.0.zip `
   -Target all -Force
 ```
 
@@ -352,6 +411,9 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1 `
 - `snapshots/` is backed up before the replacement and restored afterward.
 - `references/`, `scripts/`, `SKILL.md`, and other skill files are replaced.
   Keep custom edits in a separate repo or in `snapshots/`.
+- The local KB is outside the skill directory
+  (`~/.cache/us-sleep-regulatory/kb.sqlite`), so updates do not delete it. Run
+  `kb refresh` to pick up new sources.
 - Check the installed `VERSION` file after updating.
 
 ### Verify after an update
@@ -390,6 +452,9 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1 -Target all -Uninstall
 - **Sleep domain**: CBT-I, ISI/PSQI, trial design, safety, predicate landscape.
 - **AI/ML**: PCCP, AI lifecycle guidance, GenAI discussion paper, human
   oversight, vendor/BAA analysis.
+- **Local knowledge base**: SQLite + FTS5 index of `references/`, the guidance
+  registry, and `knowledge/seed/`. Offline by default; `kb refresh` is the only
+  network path.
 - **Audit trail**: every response carries source, URL, retrieval date, and cache
   status. `snapshot` writes dated JSON + Markdown.
 
@@ -407,6 +472,7 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1 -Target all -Uninstall
 ├── CHANGELOG.md
 ├── agents/openai.yaml
 ├── commands/opencode/us-sleep-regulatory.md
+├── knowledge/seed/
 ├── references/
 ├── scripts/
 │   ├── reg.py
@@ -431,6 +497,7 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1 -Target all -Uninstall
 - [references/sleep-domain.md](references/sleep-domain.md) — CBT-I, endpoints,
   predicates, trial design
 - [references/memo-template.md](references/memo-template.md) — auditable memo
+- `knowledge/seed/` — offline CFR / 510(k) / Federal Register seed
 
 ## Versioning
 

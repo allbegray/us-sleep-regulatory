@@ -160,6 +160,56 @@ TOOLS: list[dict[str, Any]] = [
         ),
     },
     {
+        "name": "kb_search",
+        "description": "Search the local SQLite knowledge base offline. Use this before live FDA/eCFR tools; it contains the bundled references, guidance registry, CFR sections, classifications, 510(k) records, Federal Register notices, and agent notes.",
+        "inputSchema": _schema(
+            {
+                "query": {"type": "string"},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 50, "default": 10},
+                "source_type": {"type": "string", "description": "e.g. cfr, guidance, 510k, classification, federal-register, note."},
+                "status": {"type": "string"},
+            }
+        ),
+    },
+    {
+        "name": "kb_get",
+        "description": "Read one local knowledge-base document by id, URL, or citation. Offline.",
+        "inputSchema": _schema({"key": {"type": "string"}}, ["key"]),
+    },
+    {
+        "name": "kb_stats",
+        "description": "Show local KB document counts, source types, FTS status, last init/refresh, and staleness. Run this first to decide whether a refresh is needed.",
+        "inputSchema": _schema({}),
+    },
+    {
+        "name": "kb_note_add",
+        "description": "Save a research note with citations into the local KB. Use this after a session to accumulate durable knowledge.",
+        "inputSchema": _schema(
+            {
+                "text": {"type": "string"},
+                "title": {"type": "string"},
+                "tags": {"type": "string", "description": "Comma-separated."},
+                "sources": {"type": "array", "items": {"type": "string"}},
+            },
+            ["text"],
+        ),
+    },
+    {
+        "name": "kb_refresh",
+        "description": "Refresh the local KB from official sources. This is the only KB tool that uses the network. Core refresh is fast; set extended=true for Federal Register/ClinicalTrials/PubMed.",
+        "inputSchema": _schema(
+            {
+                "extended": {"type": "boolean", "default": False},
+                "summaries": {"type": "boolean", "default": False},
+            }
+        ),
+    },
+    {
+        "name": "kb_init",
+        "description": "Initialize or reinitialize the local KB from the bundled references, guidance registry, and knowledge/seed. Offline. Set force=true to clear first.",
+        "inputSchema": _schema({"force": {"type": "boolean", "default": False}}),
+    },
+    {
         "name": "regulatory_snapshot",
         "description": "Build a dated JSON + Markdown snapshot covering classifications, predicate landscape, key CFR sections, guidance registry, Federal Register, ClinicalTrials.gov, and PubMed. Writes files to the skill's snapshots/ directory by default.",
         "inputSchema": _schema(
@@ -204,6 +254,24 @@ def _dispatch(name: str, args: dict[str, Any]) -> dict:
             query=args.get("query", "insomnia"),
             out_dir=args.get("out_dir") or str(reg.SKILL_DIR / "snapshots"),
         )
+    if name == "kb_search":
+        return reg.kb_search(**pick("query", "limit", "source_type", "status"))
+    if name == "kb_get":
+        return reg.kb_get(**pick("key"))
+    if name == "kb_stats":
+        return reg.kb_stats()
+    if name == "kb_note_add":
+        sources = args.get("sources")
+        return reg.kb_note_add(
+            args.get("text", ""),
+            title=args.get("title"),
+            tags=args.get("tags"),
+            sources=sources if isinstance(sources, list) else None,
+        )
+    if name == "kb_refresh":
+        return reg.kb_refresh(extended=bool(args.get("extended")), summaries=bool(args.get("summaries")))
+    if name == "kb_init":
+        return reg.kb_init(force=bool(args.get("force")))
     raise ValueError(f"Unknown tool: {name}")
 
 
@@ -236,8 +304,9 @@ def main() -> int:
                         "serverInfo": {"name": "us-sleep-regulatory", "version": reg.VERSION},
                         "instructions": (
                             "Official-source US regulatory research for an app-based sleep therapy service. "
-                            "Always re-verify guidance status on the official page and cite retrieved_at. "
-                            "This is not legal advice."
+                            "Search the local knowledge base (kb_search/kb_get) first; call live tools only when "
+                            "the KB lacks the answer or is stale. Always re-verify guidance status and cite "
+                            "retrieved_at. This is not legal advice."
                         ),
                     },
                 }

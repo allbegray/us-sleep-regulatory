@@ -62,13 +62,16 @@ jobs:
             "$base\.config\opencode\skills\us-sleep-regulatory\SKILL.md",
             "$base\.config\opencode\commands\us-sleep-regulatory.md",
             "$base\.agents\skills\us-sleep-regulatory\install.ps1",
-            "$base\.agents\skills\us-sleep-regulatory\README.ko.md"
+            "$base\.agents\skills\us-sleep-regulatory\README.ko.md",
+            "$base\.agents\skills\us-sleep-regulatory\knowledge\seed\cfr-21-882.5801.md"
           )
           foreach ($p in $paths) {
             if (-not (Test-Path -LiteralPath $p)) { throw "missing: $p" }
           }
 
           python "$base\.agents\skills\us-sleep-regulatory\scripts\reg.py" guidance --topic device --format md | Out-Null
+          $env:US_REG_KB = "$base\kb.sqlite"
+          python "$base\.agents\skills\us-sleep-regulatory\scripts\reg.py" kb search "QVO predicate" --format md | Out-Null
 
           .\install.ps1 -Target all -BaseDir $base -Uninstall
           foreach ($p in $paths) {

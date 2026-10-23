@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.3.0 — 2026-10-23
+
+- Added a local **SQLite + FTS5 knowledge base** so prompts do not call MCP/REST
+  APIs every time.
+- New `reg.py kb` commands: `init`, `refresh`, `search`, `get`, `stats`,
+  `stale`, `note add/list`, `export`, `ingest`.
+- Bundled offline seed for key CFR sections, QVO/QMZ/LEL classifications,
+  510(k) records, and Federal Register documents.
+- The skill workflow is now local-first; live APIs are a refresh path for
+  missing or stale entries.
+- MCP server now exposes 16 tools, including `kb_search`, `kb_get`, `kb_stats`,
+  `kb_note_add`, `kb_refresh`, and `kb_init`.
+- `kb refresh` supports core, extended (FR/trials/PubMed), and 510(k) summary
+  modes.
+- Updates preserve the local KB and `snapshots/`.
+
 ## 1.2.0 — 2026-10-23
 
 - Windows support: native `install.ps1`, PowerShell paths, and a

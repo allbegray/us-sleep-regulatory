@@ -45,6 +45,7 @@ import json
 import os
 import re
 import shutil
+import sqlite3
 import subprocess
 import sys
 import time
@@ -1153,8 +1154,1134 @@ def build_snapshot(
 
 
 # ---------------------------------------------------------------------------
+# Local knowledge base (SQLite + FTS5)
+# ---------------------------------------------------------------------------
+
+KB_SCHEMA_VERSION = "1"
+KB_DEFAULT_TTL_DAYS = 90
+
+KB_SCHEMA = """
+CREATE TABLE IF NOT EXISTS meta (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS documents (
+    id TEXT PRIMARY KEY,
+    source TEXT NOT NULL,
+    source_type TEXT NOT NULL,
+    title TEXT NOT NULL,
+    citation TEXT,
+    url TEXT,
+    retrieved_at TEXT NOT NULL,
+    as_of TEXT,
+    status TEXT,
+    tags TEXT,
+    text TEXT NOT NULL,
+    metadata TEXT,
+    sha256 TEXT NOT NULL,
+    ttl_days INTEGER
+);
+
+CREATE INDEX IF NOT EXISTS idx_documents_type ON documents(source_type);
+CREATE INDEX IF NOT EXISTS idx_documents_status ON documents(status);
+CREATE INDEX IF NOT EXISTS idx_documents_retrieved ON documents(retrieved_at);
+
+CREATE TABLE IF NOT EXISTS sources (
+    name TEXT PRIMARY KEY,
+    last_refresh TEXT,
+    last_status TEXT,
+    detail TEXT
+);
+"""
+
+KB_FTS_SCHEMA = """
+CREATE VIRTUAL TABLE IF NOT EXISTS documents_fts USING fts5(
+    title,
+    citation,
+    text,
+    tags,
+    content='documents',
+    content_rowid='rowid'
+);
+
+CREATE TRIGGER IF NOT EXISTS documents_ai AFTER INSERT ON documents BEGIN
+    INSERT INTO documents_fts(rowid, title, citation, text, tags)
+    VALUES (new.rowid, new.title, new.citation, new.text, new.tags);
+END;
+
+CREATE TRIGGER IF NOT EXISTS documents_ad AFTER DELETE ON documents BEGIN
+    INSERT INTO documents_fts(documents_fts, rowid, title, citation, text, tags)
+    VALUES ('delete', old.rowid, old.title, old.citation, old.text, old.tags);
+END;
+
+CREATE TRIGGER IF NOT EXISTS documents_au AFTER UPDATE ON documents BEGIN
+    INSERT INTO documents_fts(documents_fts, rowid, title, citation, text, tags)
+    VALUES ('delete', old.rowid, old.title, old.citation, old.text, old.tags);
+    INSERT INTO documents_fts(rowid, title, citation, text, tags)
+    VALUES (new.rowid, new.title, new.citation, new.text, new.tags);
+END;
+"""
+
+
+def kb_path() -> Path:
+    """Return the local knowledge-base path (US_REG_KB overrides it)."""
+    return Path(os.environ.get("US_REG_KB", str(CACHE_DIR / "kb.sqlite"))).expanduser()
+
+
+def _kb_meta_get(conn: sqlite3.Connection, key: str) -> str | None:
+    row = conn.execute("SELECT value FROM meta WHERE key = ?", (key,)).fetchone()
+    return row["value"] if row else None
+
+
+def _kb_meta_set(conn: sqlite3.Connection, key: str, value: str) -> None:
+    conn.execute(
+        "INSERT INTO meta(key, value) VALUES(?, ?) "
+        "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        (key, str(value)),
+    )
+
+
+def _kb_fts_enabled(conn: sqlite3.Connection) -> bool:
+    return _kb_meta_get(conn, "fts") == "1"
+
+
+def _kb_schema(conn: sqlite3.Connection) -> None:
+    conn.executescript(KB_SCHEMA)
+    try:
+        conn.executescript(KB_FTS_SCHEMA)
+        _kb_meta_set(conn, "fts", "1")
+    except sqlite3.OperationalError:
+        # SQLite built without FTS5: search falls back to LIKE.
+        _kb_meta_set(conn, "fts", "0")
+    _kb_meta_set(conn, "schema_version", KB_SCHEMA_VERSION)
+    conn.commit()
+
+
+def _kb_split_frontmatter(raw: str) -> tuple[dict[str, str], str]:
+    meta: dict[str, str] = {}
+    body = raw
+    if raw.startswith("---"):
+        parts = raw.split("---", 2)
+        if len(parts) >= 3:
+            for line in parts[1].strip().splitlines():
+                if ":" in line:
+                    key, value = line.split(":", 1)
+                    meta[key.strip().lower()] = value.strip().strip('"').strip("'")
+            body = parts[2].lstrip("\n")
+    return meta, body
+
+
+def _first_heading(text: str) -> str | None:
+    for line in text.splitlines():
+        if line.startswith("# "):
+            return line[2:].strip()
+    return None
+
+
+def _kb_upsert(conn: sqlite3.Connection, doc: dict[str, Any]) -> str:
+    text = doc.get("text") or ""
+    sha = hashlib.sha256(text.encode("utf-8")).hexdigest()
+    existing = conn.execute("SELECT sha256 FROM documents WHERE id = ?", (doc["id"],)).fetchone()
+    if existing and existing["sha256"] == sha:
+        return "unchanged"
+    conn.execute(
+        """
+        INSERT INTO documents
+            (id, source, source_type, title, citation, url, retrieved_at, as_of,
+             status, tags, text, metadata, sha256, ttl_days)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+            source = excluded.source,
+            source_type = excluded.source_type,
+            title = excluded.title,
+            citation = excluded.citation,
+            url = excluded.url,
+            retrieved_at = excluded.retrieved_at,
+            as_of = excluded.as_of,
+            status = excluded.status,
+            tags = excluded.tags,
+            text = excluded.text,
+            metadata = excluded.metadata,
+            sha256 = excluded.sha256,
+            ttl_days = excluded.ttl_days
+        """,
+        (
+            doc["id"],
+            doc.get("source") or "local",
+            doc.get("source_type") or "internal",
+            doc.get("title") or doc["id"],
+            doc.get("citation"),
+            doc.get("url"),
+            doc.get("retrieved_at") or utcnow(),
+            doc.get("as_of"),
+            doc.get("status") or "internal",
+            doc.get("tags") or "",
+            text,
+            json.dumps(doc.get("metadata") or {}, ensure_ascii=False),
+            sha,
+            doc.get("ttl_days"),
+        ),
+    )
+    return "updated" if existing else "inserted"
+
+
+def _kb_ingest_markdown_file(
+    conn: sqlite3.Connection,
+    path: Path,
+    *,
+    source: str,
+    source_type: str,
+    status: str,
+    tags: str,
+    ttl_days: int,
+    id_prefix: str,
+) -> str:
+    raw = path.read_text(encoding="utf-8", errors="replace")
+    meta, body = _kb_split_frontmatter(raw)
+    title = meta.get("title") or _first_heading(body) or path.stem
+    doc_id = meta.get("id") or f"{id_prefix}:{path.stem}"
+    try:
+        mtime = dt.datetime.fromtimestamp(path.stat().st_mtime, dt.timezone.utc).replace(microsecond=0)
+        file_time = mtime.isoformat().replace("+00:00", "Z")
+    except OSError:
+        file_time = utcnow()
+    merged_tags = ",".join(t for t in [tags, meta.get("tags", "")] if t)
+    ttl = ttl_days
+    try:
+        if meta.get("ttl_days"):
+            ttl = int(meta["ttl_days"])
+    except ValueError:
+        pass
+    return _kb_upsert(
+        conn,
+        {
+            "id": doc_id,
+            "source": meta.get("source") or source,
+            "source_type": meta.get("source_type") or source_type,
+            "title": title,
+            "citation": meta.get("citation"),
+            "url": meta.get("url"),
+            "retrieved_at": meta.get("retrieved_at") or file_time,
+            "as_of": meta.get("as_of"),
+            "status": meta.get("status") or status,
+            "tags": merged_tags,
+            "text": body.strip(),
+            "metadata": {"path": str(path)},
+            "ttl_days": ttl,
+        },
+    )
+
+
+def _kb_ingest_local(conn: sqlite3.Connection) -> dict[str, int]:
+    counts = {"inserted": 0, "updated": 0, "unchanged": 0}
+
+    def bump(result: str) -> None:
+        counts[result] = counts.get(result, 0) + 1
+
+    refs_dir = SKILL_DIR / "references"
+    if refs_dir.exists():
+        for path in sorted(refs_dir.glob("*.md")):
+            bump(
+                _kb_ingest_markdown_file(
+                    conn,
+                    path,
+                    source="local-references",
+                    source_type="internal",
+                    status="internal",
+                    tags="internal,playbook",
+                    ttl_days=365,
+                    id_prefix="internal",
+                )
+            )
+
+    try:
+        for entry in load_guidance():
+            topics = entry.get("topics") or []
+            if isinstance(topics, str):
+                topics = [topics]
+            text = "\n".join(
+                [
+                    entry.get("title", ""),
+                    "",
+                    f"Status: {entry.get('status', '')}",
+                    f"Issued: {entry.get('issued', '')}",
+                    f"Docket: {entry.get('docket') or 'n/a'}",
+                    f"Topics: {', '.join(topics)}",
+                    f"Notes: {entry.get('notes', '')}",
+                ]
+            )
+            bump(
+                _kb_upsert(
+                    conn,
+                    {
+                        "id": f"guidance:{entry.get('id')}",
+                        "source": "curated-guidance-registry",
+                        "source_type": "guidance",
+                        "title": entry.get("title") or entry.get("id"),
+                        "citation": entry.get("docket"),
+                        "url": entry.get("url"),
+                        "retrieved_at": entry.get("last_verified") or utcnow(),
+                        "as_of": entry.get("issued"),
+                        "status": entry.get("status") or "guidance",
+                        "tags": ",".join(["guidance"] + topics),
+                        "text": text,
+                        "metadata": {"registry_id": entry.get("id")},
+                        "ttl_days": 30,
+                    },
+                )
+            )
+    except RegError:
+        pass
+
+    seed_dir = SKILL_DIR / "knowledge" / "seed"
+    if seed_dir.exists():
+        for path in sorted(seed_dir.glob("*.md")):
+            if path.name.lower() == "readme.md":
+                continue
+            bump(
+                _kb_ingest_markdown_file(
+                    conn,
+                    path,
+                    source="local-seed",
+                    source_type="internal",
+                    status="internal",
+                    tags="seed",
+                    ttl_days=KB_DEFAULT_TTL_DAYS,
+                    id_prefix="seed",
+                )
+            )
+
+    conn.commit()
+    return counts
+
+
+def _kb_init_conn(conn: sqlite3.Connection) -> dict[str, int]:
+    counts = _kb_ingest_local(conn)
+    _kb_meta_set(conn, "initialized", "1")
+    _kb_meta_set(conn, "last_init", utcnow())
+    _kb_meta_set(conn, "schema_version", KB_SCHEMA_VERSION)
+    conn.commit()
+    return counts
+
+
+def _kb_connect(auto_init: bool = True) -> sqlite3.Connection:
+    path = kb_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(path), timeout=15)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode = WAL")
+    conn.execute("PRAGMA synchronous = NORMAL")
+    _kb_schema(conn)
+    if auto_init and not _kb_meta_get(conn, "initialized"):
+        _kb_init_conn(conn)
+    return conn
+
+
+def _kb_age_days(iso: str | None) -> int | None:
+    if not iso:
+        return None
+    try:
+        value = dt.datetime.fromisoformat(iso.replace("Z", "+00:00"))
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=dt.timezone.utc)
+        return max(0, (dt.datetime.now(dt.timezone.utc) - value).days)
+    except (ValueError, TypeError):
+        return None
+
+
+def _kb_stats_conn(conn: sqlite3.Connection) -> dict[str, Any]:
+    by_type = {
+        row["source_type"]: row["n"]
+        for row in conn.execute("SELECT source_type, count(*) AS n FROM documents GROUP BY source_type")
+    }
+    by_status = {
+        row["status"]: row["n"]
+        for row in conn.execute("SELECT status, count(*) AS n FROM documents GROUP BY status")
+    }
+    total = conn.execute("SELECT count(*) AS n FROM documents").fetchone()["n"]
+    sources = [dict(row) for row in conn.execute("SELECT * FROM sources ORDER BY name")]
+    stale_rows = []
+    oldest = None
+    newest = None
+    for row in conn.execute("SELECT id, title, source, retrieved_at, ttl_days FROM documents"):
+        age = _kb_age_days(row["retrieved_at"])
+        if age is not None:
+            if oldest is None or age > oldest[0]:
+                oldest = (age, row["id"], row["retrieved_at"])
+            if newest is None or age < newest[0]:
+                newest = (age, row["id"], row["retrieved_at"])
+            ttl = row["ttl_days"] or KB_DEFAULT_TTL_DAYS
+            if age > ttl:
+                stale_rows.append({"id": row["id"], "title": row["title"], "source": row["source"], "age_days": age, "ttl_days": ttl})
+    return {
+        "documents": total,
+        "by_source_type": by_type,
+        "by_status": by_status,
+        "sources": sources,
+        "stale_count": len(stale_rows),
+        "stale": sorted(stale_rows, key=lambda r: r["age_days"], reverse=True)[:20],
+        "oldest": {"age_days": oldest[0], "id": oldest[1], "retrieved_at": oldest[2]} if oldest else None,
+        "newest": {"age_days": newest[0], "id": newest[1], "retrieved_at": newest[2]} if newest else None,
+        "last_init": _kb_meta_get(conn, "last_init"),
+        "last_refresh": _kb_meta_get(conn, "last_refresh"),
+        "fts": _kb_fts_enabled(conn),
+    }
+
+
+def kb_init(force: bool = False) -> dict:
+    conn = _kb_connect(auto_init=False)
+    if force:
+        conn.execute("DELETE FROM documents")
+        conn.execute("DELETE FROM sources")
+        conn.commit()
+    counts = _kb_init_conn(conn)
+    stats = _kb_stats_conn(conn)
+    out = {
+        "_meta": {
+            "source": "local knowledge base",
+            "db": str(kb_path()),
+            "retrieved_at": utcnow(),
+            "note": "Offline init from references/, the guidance registry, and knowledge/seed/.",
+        },
+        "action": "reinit" if force else "init",
+        "counts": counts,
+        "documents": stats["documents"],
+        "by_source_type": stats["by_source_type"],
+        "fts": stats["fts"],
+    }
+    out["_md"] = (
+        f"**Local KB {'reinitialized' if force else 'initialized'}** — {stats['documents']} documents\n\n"
+        + _md_table(
+            ["Action", "Count"],
+            [[k, v] for k, v in counts.items()],
+        )
+        + "\n\n"
+        + _md_table(
+            ["Source type", "Documents"],
+            [[k or "(none)", v] for k, v in sorted(stats["by_source_type"].items())],
+        )
+    )
+    return out
+
+
+def _kb_search_fts(
+    conn: sqlite3.Connection,
+    query: str,
+    limit: int,
+    source_type: str | None,
+    status: str | None,
+) -> list[dict]:
+    if not _kb_fts_enabled(conn):
+        return []
+    terms = re.findall(r"[A-Za-z0-9][A-Za-z0-9_.-]*", query)
+    if not terms:
+        return []
+    match = " OR ".join(f'"{term}"' for term in terms[:12])
+    sql = """
+        SELECT d.id, d.source, d.source_type, d.title, d.citation, d.url,
+               d.retrieved_at, d.as_of, d.status, d.tags,
+               snippet(documents_fts, 2, '[', ']', ' … ', 24) AS snippet,
+               bm25(documents_fts) AS rank
+        FROM documents_fts
+        JOIN documents d ON d.rowid = documents_fts.rowid
+        WHERE documents_fts MATCH ?
+    """
+    params: list[Any] = [match]
+    if source_type:
+        sql += " AND d.source_type = ?"
+        params.append(source_type)
+    if status:
+        sql += " AND d.status = ?"
+        params.append(status)
+    sql += " ORDER BY rank LIMIT ?"
+    params.append(limit)
+    try:
+        return [dict(row) for row in conn.execute(sql, params)]
+    except sqlite3.OperationalError:
+        return []
+
+
+def _kb_search_like(
+    conn: sqlite3.Connection,
+    query: str,
+    limit: int,
+    source_type: str | None,
+    status: str | None,
+) -> list[dict]:
+    like = f"%{query.lower()}%"
+    sql = """
+        SELECT d.id, d.source, d.source_type, d.title, d.citation, d.url,
+               d.retrieved_at, d.as_of, d.status, d.tags,
+               substr(d.text, 1, 320) AS snippet,
+               0.0 AS rank
+        FROM documents d
+        WHERE (
+            lower(d.title) LIKE ?
+            OR lower(coalesce(d.citation, '')) LIKE ?
+            OR lower(coalesce(d.id, '')) LIKE ?
+            OR lower(d.text) LIKE ?
+        )
+    """
+    params: list[Any] = [like, like, like, like]
+    if source_type:
+        sql += " AND d.source_type = ?"
+        params.append(source_type)
+    if status:
+        sql += " AND d.status = ?"
+        params.append(status)
+    sql += " ORDER BY d.retrieved_at DESC, d.title LIMIT ?"
+    params.append(limit)
+    return [dict(row) for row in conn.execute(sql, params)]
+
+
+def kb_search(
+    query: str,
+    limit: int = 10,
+    source_type: str | None = None,
+    status: str | None = None,
+) -> dict:
+    query = (query or "").strip()
+    limit = max(1, min(int(limit), 50))
+    conn = _kb_connect()
+    if not query:
+        rows = [
+            dict(row)
+            for row in conn.execute(
+                "SELECT id, source, source_type, title, citation, url, retrieved_at, as_of, status, tags, "
+                "substr(text, 1, 320) AS snippet, 0.0 AS rank "
+                "FROM documents ORDER BY retrieved_at DESC LIMIT ?",
+                (limit,),
+            )
+        ]
+    else:
+        rows = _kb_search_fts(conn, query, limit, source_type, status)
+        # Add exact id/citation/URL hits and short queries that FTS may miss.
+        for row in _kb_search_like(conn, query, limit, source_type, status):
+            if all(existing["id"] != row["id"] for existing in rows):
+                rows.append(row)
+            if len(rows) >= limit:
+                break
+        rows = rows[:limit]
+    out = {
+        "_meta": {
+            "source": "local knowledge base",
+            "db": str(kb_path()),
+            "retrieved_at": utcnow(),
+            "fts": _kb_fts_enabled(conn),
+            "note": "Offline search. Use `kb refresh` to update the local copy.",
+        },
+        "query": query,
+        "count": len(rows),
+        "results": rows,
+    }
+    if rows:
+        out["_md"] = _md_table(
+            ["ID", "Type", "Status", "Title", "Retrieved"],
+            [[r["id"], r["source_type"], r["status"], r["title"], r["retrieved_at"]] for r in rows],
+        )
+    return out
+
+
+def kb_get(key: str) -> dict:
+    key = (key or "").strip()
+    conn = _kb_connect()
+    row = None
+    for clause in ("id = ?", "url = ?", "citation = ?"):
+        row = conn.execute(f"SELECT * FROM documents WHERE {clause} LIMIT 1", (key,)).fetchone()
+        if row:
+            break
+    if row is None:
+        row = conn.execute(
+            "SELECT * FROM documents WHERE title LIKE ? ORDER BY retrieved_at DESC LIMIT 1",
+            (f"%{key}%",),
+        ).fetchone()
+    if row is None:
+        raise RegError(f"No local knowledge document matched: {key}")
+    doc = dict(row)
+    doc["metadata"] = json.loads(doc["metadata"]) if doc.get("metadata") else {}
+    return {
+        "_meta": {
+            "source": "local knowledge base",
+            "db": str(kb_path()),
+            "retrieved_at": utcnow(),
+            "note": "Offline read. Verify the official URL before relying on it.",
+        },
+        "document": doc,
+    }
+
+
+def kb_stats() -> dict:
+    conn = _kb_connect()
+    stats = _kb_stats_conn(conn)
+    path = kb_path()
+    out = {
+        "_meta": {
+            "source": "local knowledge base",
+            "db": str(path),
+            "retrieved_at": utcnow(),
+        },
+        "db": str(path),
+        "db_bytes": path.stat().st_size if path.exists() else 0,
+        **stats,
+    }
+    out["_md"] = (
+        f"**Local KB** — `{path}`\n\n"
+        + f"- Documents: **{stats['documents']}**\n"
+        + f"- FTS5: **{stats['fts']}**\n"
+        + f"- Last init: {stats['last_init'] or 'never'}\n"
+        + f"- Last refresh: {stats['last_refresh'] or 'never'}\n"
+        + f"- Stale: **{stats['stale_count']}**\n\n"
+        + _md_table(
+            ["Source type", "Documents"],
+            [[k or "(none)", v] for k, v in sorted(stats["by_source_type"].items())],
+        )
+    )
+    return out
+
+
+def kb_stale(days: int | None = None) -> dict:
+    conn = _kb_connect()
+    rows = []
+    for row in conn.execute(
+        "SELECT id, title, source, source_type, url, retrieved_at, ttl_days FROM documents ORDER BY retrieved_at"
+    ):
+        age = _kb_age_days(row["retrieved_at"])
+        ttl = days if days is not None else (row["ttl_days"] or KB_DEFAULT_TTL_DAYS)
+        if age is not None and age > ttl:
+            rows.append({**dict(row), "age_days": age, "ttl_days": ttl})
+    out = {
+        "_meta": {
+            "source": "local knowledge base",
+            "db": str(kb_path()),
+            "retrieved_at": utcnow(),
+            "threshold_days": days,
+        },
+        "count": len(rows),
+        "results": rows,
+    }
+    if rows:
+        out["_md"] = _md_table(
+            ["ID", "Type", "Age (days)", "TTL", "Title"],
+            [[r["id"], r["source_type"], r["age_days"], r["ttl_days"], r["title"]] for r in rows],
+        )
+    return out
+
+
+def kb_note_add(
+    text: str,
+    title: str | None = None,
+    tags: str | None = None,
+    sources: list[str] | None = None,
+) -> dict:
+    text = (text or "").strip()
+    if not text:
+        raise RegError("Note text is required.")
+    now = utcnow()
+    digest = hashlib.sha256(text.encode("utf-8")).hexdigest()[:8]
+    note_id = f"note:{now.replace('-', '').replace(':', '').replace('T', '').replace('Z', '')}-{digest}"
+    source_lines = [s for s in (sources or []) if s.strip()]
+    body = text
+    if source_lines:
+        body += "\n\nSources:\n" + "\n".join(f"- {s}" for s in source_lines)
+    conn = _kb_connect()
+    _kb_upsert(
+        conn,
+        {
+            "id": note_id,
+            "source": "agent-note",
+            "source_type": "note",
+            "title": title or text.splitlines()[0][:80],
+            "citation": None,
+            "url": source_lines[0] if source_lines else None,
+            "retrieved_at": now,
+            "as_of": now[:10],
+            "status": "note",
+            "tags": ",".join(t for t in ["note", tags or ""] if t),
+            "text": body,
+            "metadata": {"sources": source_lines},
+            "ttl_days": 365,
+        },
+    )
+    conn.commit()
+    return {
+        "_meta": {"source": "local knowledge base", "db": str(kb_path()), "retrieved_at": utcnow()},
+        "id": note_id,
+        "title": title or text.splitlines()[0][:80],
+        "tags": tags or "",
+        "sources": source_lines,
+    }
+
+
+def kb_note_list(limit: int = 20) -> dict:
+    conn = _kb_connect()
+    rows = [
+        dict(row)
+        for row in conn.execute(
+            "SELECT id, title, tags, url, retrieved_at, substr(text, 1, 400) AS text "
+            "FROM documents WHERE source_type = 'note' ORDER BY retrieved_at DESC LIMIT ?",
+            (max(1, min(int(limit), 100)),),
+        )
+    ]
+    out = {
+        "_meta": {"source": "local knowledge base", "db": str(kb_path()), "retrieved_at": utcnow()},
+        "count": len(rows),
+        "results": rows,
+    }
+    if rows:
+        out["_md"] = _md_table(
+            ["ID", "Title", "Tags", "Retrieved"],
+            [[r["id"], r["title"], r["tags"], r["retrieved_at"]] for r in rows],
+        )
+    return out
+
+
+def _kb_export_text(conn: sqlite3.Connection, fmt: str) -> str:
+    rows = conn.execute("SELECT * FROM documents ORDER BY source_type, retrieved_at DESC").fetchall()
+    if fmt == "jsonl":
+        return "\n".join(
+            json.dumps({**dict(row), "metadata": json.loads(row["metadata"]) if row["metadata"] else {}}, ensure_ascii=False)
+            for row in rows
+        ) + "\n"
+    lines = [
+        "# US Sleep Regulatory — local knowledge export",
+        "",
+        f"Generated: {utcnow()}  ",
+        f"Documents: {len(rows)}",
+        "",
+        "> Local snapshot. Verify the official URL before relying on a document.",
+        "",
+    ]
+    for row in rows:
+        lines += [
+            f"## {row['title']}",
+            "",
+            f"- id: `{row['id']}`",
+            f"- source: {row['source']}",
+            f"- type: {row['source_type']}",
+            f"- status: {row['status']}",
+            f"- citation: {row['citation'] or ''}",
+            f"- url: {row['url'] or ''}",
+            f"- retrieved_at: {row['retrieved_at']}",
+            f"- as_of: {row['as_of'] or ''}",
+            f"- tags: {row['tags'] or ''}",
+            "",
+            row["text"],
+            "",
+        ]
+    return "\n".join(lines)
+
+
+def kb_export(fmt: str = "md", out: str | None = None) -> str:
+    fmt = "jsonl" if fmt == "jsonl" else "md"
+    conn = _kb_connect()
+    text = _kb_export_text(conn, fmt)
+    if out:
+        path = Path(out)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+    return text
+
+
+def _kb_ingest_text(
+    conn: sqlite3.Connection,
+    *,
+    text: str,
+    title: str,
+    source: str,
+    source_type: str,
+    tags: str,
+    url: str | None = None,
+    metadata: dict | None = None,
+) -> str:
+    digest = hashlib.sha256(text.encode("utf-8")).hexdigest()[:8]
+    doc_id = f"ingest:{re.sub(r'[^A-Za-z0-9_.-]+', '-', title)[:60]}-{digest}"
+    return _kb_upsert(
+        conn,
+        {
+            "id": doc_id,
+            "source": source,
+            "source_type": source_type,
+            "title": title,
+            "citation": None,
+            "url": url,
+            "retrieved_at": utcnow(),
+            "as_of": utcnow()[:10],
+            "status": "internal",
+            "tags": ",".join(t for t in ["ingest", tags or ""] if t),
+            "text": text,
+            "metadata": metadata or {},
+            "ttl_days": 365,
+        },
+    )
+
+
+def kb_ingest(
+    path: str,
+    source: str | None = None,
+    title: str | None = None,
+    tags: str | None = None,
+) -> dict:
+    target = Path(path).expanduser()
+    if not target.exists():
+        raise RegError(f"Path not found: {target}")
+    files = [target] if target.is_file() else sorted(p for p in target.rglob("*") if p.is_file())
+    conn = _kb_connect()
+    results = []
+    for file in files:
+        suffix = file.suffix.lower()
+        try:
+            if suffix == ".pdf":
+                text, method = _extract_pdf_text(file)
+                if not text:
+                    results.append({"path": str(file), "status": "skipped", "detail": "No PDF text extractor; install pypdf or pdftotext."})
+                    continue
+            elif suffix in {".md", ".txt"}:
+                text = file.read_text(encoding="utf-8", errors="replace")
+            elif suffix == ".json":
+                text = json.dumps(json.loads(file.read_text(encoding="utf-8")), ensure_ascii=False, indent=2)
+            elif suffix in {".html", ".htm"}:
+                raw = file.read_text(encoding="utf-8", errors="replace")
+                text = _clean(re.sub(r"<[^>]+>", " ", raw))
+            else:
+                results.append({"path": str(file), "status": "skipped", "detail": "Unsupported file type."})
+                continue
+            doc_title = title if (title and len(files) == 1) else (_first_heading(text) or file.stem)
+            status = _kb_ingest_text(
+                conn,
+                text=text,
+                title=doc_title,
+                source=source or "local-file",
+                source_type="internal",
+                tags=tags or "",
+                metadata={"path": str(file)},
+            )
+            results.append({"path": str(file), "status": status, "title": doc_title})
+        except Exception as exc:  # noqa: BLE001
+            results.append({"path": str(file), "status": "error", "detail": str(exc)[:300]})
+    conn.commit()
+    out = {
+        "_meta": {"source": "local knowledge base", "db": str(kb_path()), "retrieved_at": utcnow()},
+        "count": sum(1 for r in results if r["status"] in {"inserted", "updated", "unchanged"}),
+        "results": results,
+    }
+    if results:
+        out["_md"] = _md_table(
+            ["Path", "Status", "Title/Detail"],
+            [[r["path"], r["status"], r.get("title") or r.get("detail", "")] for r in results],
+        )
+    return out
+
+
+def _kb_source_update(conn: sqlite3.Connection, name: str, status: str, detail: str) -> None:
+    conn.execute(
+        "INSERT INTO sources(name, last_refresh, last_status, detail) VALUES(?, ?, ?, ?) "
+        "ON CONFLICT(name) DO UPDATE SET last_refresh = excluded.last_refresh, "
+        "last_status = excluded.last_status, detail = excluded.detail",
+        (name, utcnow(), status, detail[:1000]),
+    )
+
+
+def _kb_refresh_cfr(conn: sqlite3.Connection) -> int:
+    refs = [
+        ("21", "882.5801", False),
+        ("21", "882.5705", False),
+        ("21", "882.5050", False),
+        ("21", "820.1", False),
+        ("45", "164.308", False),
+        ("45", "164.402", False),
+        ("16", "318", True),
+    ]
+    count = 0
+    errors: list[str] = []
+    for title, ref, is_part in refs:
+        citation = f"{title} CFR Part {ref}" if is_part else f"{title} CFR {ref}"
+        try:
+            doc = ecfr_get(title, part=ref, use_cache=False) if is_part else ecfr_get(title, section=ref, use_cache=False)
+            _kb_upsert(
+                conn,
+                {
+                    "id": f"cfr-{title}-{ref}",
+                    "source": "eCFR",
+                    "source_type": "cfr",
+                    "title": f"{citation} — {doc.get('heading', '')}",
+                    "citation": citation,
+                    "url": doc.get("human_url"),
+                    "retrieved_at": doc["_meta"]["retrieved_at"],
+                    "as_of": doc["_meta"].get("as_of"),
+                    "status": "binding",
+                    "tags": "cfr,binding",
+                    "text": doc.get("text", ""),
+                    "metadata": {"api_url": doc["_meta"].get("url")},
+                    "ttl_days": 90,
+                },
+            )
+            count += 1
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"{citation}: {exc}"[:300])
+    if errors:
+        raise RegError(f"{count} sections refreshed; " + "; ".join(errors))
+    return count
+
+
+def _kb_refresh_classifications(conn: sqlite3.Connection) -> int:
+    count = 0
+    for code in ("QVO", "QMZ", "LEL"):
+        data = fda_classification(product_code=code, use_cache=False)
+        for record in data.get("results", []):
+            _kb_upsert(
+                conn,
+                {
+                    "id": f"classification-{code}",
+                    "source": "openFDA device/classification",
+                    "source_type": "classification",
+                    "title": f"{code} — {record.get('device_name')}",
+                    "citation": record.get("regulation_number"),
+                    "url": record.get("fda_url"),
+                    "retrieved_at": data["_meta"]["retrieved_at"],
+                    "as_of": data["_meta"].get("openfda_last_updated"),
+                    "status": "data",
+                    "tags": f"device,classification,{code}",
+                    "text": json.dumps(record, ensure_ascii=False, indent=2),
+                    "metadata": {"product_code": code},
+                    "ttl_days": 30,
+                },
+            )
+            count += 1
+    return count
+
+
+def _kb_refresh_510k(conn: sqlite3.Connection) -> int:
+    count = 0
+    for code in ("QVO", "QMZ", "LEL"):
+        data = fda_predicates(product_code=code, use_cache=False)
+        for record in data.get("clearances", []):
+            text = "\n".join(
+                [
+                    f"Device: {record.get('device_name')}",
+                    f"Applicant: {record.get('applicant')}",
+                    f"Product code: {record.get('product_code')}",
+                    f"Decision: {record.get('decision_date')} ({record.get('decision_description')})",
+                    f"Regulation: {record.get('regulation_number')} (Class {record.get('device_class')})",
+                    f"Summary PDF: {record.get('summary_pdf_url') or 'n/a'}",
+                ]
+            )
+            _kb_upsert(
+                conn,
+                {
+                    "id": f"510k-{record['k_number']}",
+                    "source": "openFDA device/510k",
+                    "source_type": "510k",
+                    "title": f"{record['k_number']} — {record.get('device_name')}",
+                    "citation": record["k_number"],
+                    "url": record.get("fda_url"),
+                    "retrieved_at": data["_meta"]["retrieved_at"],
+                    "as_of": record.get("decision_date"),
+                    "status": "data",
+                    "tags": f"device,510k,{code},predicate",
+                    "text": text,
+                    "metadata": record,
+                    "ttl_days": 30,
+                },
+            )
+            count += 1
+    return count
+
+
+FR_SEED_TAGS = {
+    "2024-01709": "qmsr,quality,binding",
+    "2024-30983": "hipaa,security,proposed",
+    "2024-10855": "ftc,breach,privacy,binding",
+    "2024-28361": "ai,pccp,guidance",
+    "2024-31543": "ai,draft,guidance",
+    "2026-10734": "human-factors,guidance",
+}
+
+
+def _kb_refresh_fr(conn: sqlite3.Connection) -> int:
+    count = 0
+    for document_number, tags in FR_SEED_TAGS.items():
+        data = fr_get(document_number, use_cache=False)["document"]
+        doc_type = data.get("type") or ""
+        status = "binding" if doc_type == "Rule" else "proposed" if "Proposed" in doc_type else "notice"
+        text = "\n\n".join(x for x in [data.get("title"), data.get("abstract")] if x)
+        _kb_upsert(
+            conn,
+            {
+                "id": f"fr-{document_number}",
+                "source": "Federal Register",
+                "source_type": "federal-register",
+                "title": data.get("title") or document_number,
+                "citation": data.get("citation"),
+                "url": data.get("html_url"),
+                "retrieved_at": utcnow(),
+                "as_of": data.get("publication_date"),
+                "status": status,
+                "tags": f"federal-register,{tags}",
+                "text": text,
+                "metadata": {
+                    "document_number": document_number,
+                    "docket_ids": data.get("docket_ids"),
+                },
+                "ttl_days": 30,
+            },
+        )
+        count += 1
+    return count
+
+
+def _kb_refresh_extended(conn: sqlite3.Connection) -> int:
+    count = 0
+    for term in ('"software as a medical device"', '"artificial intelligence"'):
+        data = fr_search(term=term, agency="fda", since="2024-01-01", limit=20, use_cache=False)
+        for record in data.get("results", []):
+            doc_type = record.get("type") or ""
+            status = "binding" if doc_type == "Rule" else "proposed" if "Proposed" in doc_type else "notice"
+            _kb_upsert(
+                conn,
+                {
+                    "id": f"fr-{record.get('document_number')}",
+                    "source": "Federal Register",
+                    "source_type": "federal-register",
+                    "title": record.get("title") or record.get("document_number"),
+                    "citation": record.get("citation"),
+                    "url": record.get("html_url"),
+                    "retrieved_at": data["_meta"]["retrieved_at"],
+                    "as_of": record.get("publication_date"),
+                    "status": status,
+                    "tags": "federal-register,device,software,ai",
+                    "text": "\n\n".join(x for x in [record.get("title"), record.get("abstract")] if x),
+                    "metadata": {"document_number": record.get("document_number")},
+                    "ttl_days": 30,
+                },
+            )
+            count += 1
+
+    trials = trials_search(condition="insomnia", intervention="cognitive behavioral therapy", limit=20, use_cache=False)
+    for record in trials.get("results", []):
+        _kb_upsert(
+            conn,
+            {
+                "id": f"trial-{record.get('nct_id')}",
+                "source": "ClinicalTrials.gov",
+                "source_type": "trial",
+                "title": f"{record.get('nct_id')} — {record.get('title')}",
+                "citation": record.get("nct_id"),
+                "url": record.get("url"),
+                "retrieved_at": trials["_meta"]["retrieved_at"],
+                "as_of": record.get("start_date"),
+                "status": "data",
+                "tags": "trial,insomnia,cbt-i",
+                "text": json.dumps(record, ensure_ascii=False, indent=2),
+                "metadata": record,
+                "ttl_days": 30,
+            },
+        )
+        count += 1
+
+    pubmed = pubmed_search("digital CBT-I insomnia randomized", limit=20, use_cache=False)
+    for record in pubmed.get("results", []):
+        _kb_upsert(
+            conn,
+            {
+                "id": f"pubmed-{record.get('pmid')}",
+                "source": "PubMed",
+                "source_type": "pubmed",
+                "title": record.get("title") or record.get("pmid"),
+                "citation": record.get("pmid"),
+                "url": record.get("url"),
+                "retrieved_at": pubmed["_meta"]["retrieved_at"],
+                "as_of": record.get("pubdate"),
+                "status": "data",
+                "tags": "pubmed,insomnia,cbt-i",
+                "text": json.dumps(record, ensure_ascii=False, indent=2),
+                "metadata": record,
+                "ttl_days": 30,
+            },
+        )
+        count += 1
+    return count
+
+
+def _kb_refresh_summaries(conn: sqlite3.Connection) -> int:
+    count = 0
+    for k_number in ("K191716", "K233577", "DEN200033"):
+        data = fda_510k_get(k_number, fetch_summary=True, use_cache=False)
+        record = data["results"]
+        text = record.get("summary_text")
+        if not text:
+            continue
+        _kb_upsert(
+            conn,
+            {
+                "id": f"510k-summary-{k_number}",
+                "source": "FDA 510(k) summary",
+                "source_type": "510k-summary",
+                "title": f"{k_number} — {record.get('device_name')} (summary)",
+                "citation": k_number,
+                "url": record.get("summary_pdf_url"),
+                "retrieved_at": data["_meta"]["retrieved_at"],
+                "as_of": record.get("decision_date"),
+                "status": "data",
+                "tags": "device,510k,summary,predicate",
+                "text": text,
+                "metadata": record,
+                "ttl_days": 90,
+            },
+        )
+        count += 1
+    return count
+
+
+def kb_refresh(extended: bool = False, summaries: bool = False) -> dict:
+    conn = _kb_connect()
+    results: dict[str, Any] = {}
+
+    def group(name: str, fn) -> None:
+        try:
+            count = fn(conn)
+            _kb_source_update(conn, name, "ok", f"{count} documents")
+            results[name] = {"status": "ok", "count": count}
+        except Exception as exc:  # noqa: BLE001
+            _kb_source_update(conn, name, "error", str(exc))
+            results[name] = {"status": "error", "error": str(exc)[:400]}
+
+    group("cfr", _kb_refresh_cfr)
+    group("classification", _kb_refresh_classifications)
+    group("510k", _kb_refresh_510k)
+    group("federal-register", _kb_refresh_fr)
+    group("local", lambda c: sum(_kb_ingest_local(c).values()))
+    if extended:
+        group("extended", _kb_refresh_extended)
+    if summaries:
+        group("summaries", _kb_refresh_summaries)
+
+    _kb_meta_set(conn, "last_refresh", utcnow())
+    conn.commit()
+    stats = _kb_stats_conn(conn)
+    out = {
+        "_meta": {
+            "source": "local knowledge base refresh",
+            "db": str(kb_path()),
+            "retrieved_at": utcnow(),
+            "note": "Live refresh completed. Subsequent prompts can use offline kb search.",
+        },
+        "sources": results,
+        "documents": stats["documents"],
+        "by_source_type": stats["by_source_type"],
+        "stale_count": stats["stale_count"],
+    }
+    out["_md"] = _md_table(
+        ["Source", "Status", "Count / Error"],
+        [[k, v.get("status"), v.get("count") if v.get("status") == "ok" else v.get("error", "")] for k, v in results.items()],
+    )
+    return out
+
+
+# ---------------------------------------------------------------------------
 # Doctor
 # ---------------------------------------------------------------------------
+
 
 def doctor() -> dict:
     checks = []
@@ -1295,6 +2422,49 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--query", default="insomnia")
     p.add_argument("--out-dir", default=str(SKILL_DIR / "snapshots"))
 
+    p = sub.add_parser("kb", help="Local knowledge base (offline-first search).")
+    kb_sub = p.add_subparsers(dest="kb_command", required=True)
+
+    kp = kb_sub.add_parser("init", parents=[common], help="Initialize the local KB from references, guidance, and seed.")
+    kp.add_argument("--force", action="store_true", help="Clear the KB and re-ingest everything.")
+
+    kp = kb_sub.add_parser("refresh", parents=[common], help="Refresh core official sources into the local KB.")
+    kp.add_argument("--extended", action="store_true", help="Also refresh Federal Register, ClinicalTrials.gov, and PubMed.")
+    kp.add_argument("--summaries", action="store_true", help="Download and extract 510(k) summary PDFs (needs pdftotext, mutool, or pypdf).")
+
+    kp = kb_sub.add_parser("search", parents=[common], help="Search the local KB (no network).")
+    kp.add_argument("query", nargs="?", default="")
+    kp.add_argument("--limit", type=int, default=10)
+    kp.add_argument("--source-type")
+    kp.add_argument("--status")
+
+    kp = kb_sub.add_parser("get", parents=[common], help="Read one local KB document by id, URL, or citation.")
+    kp.add_argument("key")
+
+    kb_sub.add_parser("stats", parents=[common], help="Show KB size, counts, and freshness.")
+
+    kp = kb_sub.add_parser("stale", parents=[common], help="List stale local documents.")
+    kp.add_argument("--days", type=int)
+
+    kp = kb_sub.add_parser("note", help="Add or list local research notes.")
+    note_sub = kp.add_subparsers(dest="note_command", required=True)
+    np = note_sub.add_parser("add", parents=[common], help="Add a note with citations.")
+    np.add_argument("text")
+    np.add_argument("--title")
+    np.add_argument("--tags")
+    np.add_argument("--source", action="append", default=[])
+    np = note_sub.add_parser("list", parents=[common], help="List recent notes.")
+    np.add_argument("--limit", type=int, default=20)
+
+    kp = kb_sub.add_parser("export", parents=[common], help="Export the KB as Markdown or JSONL.")
+    kp.add_argument("--jsonl", action="store_true")
+
+    kp = kb_sub.add_parser("ingest", parents=[common], help="Ingest local PDF/Markdown/Text/JSON/HTML files.")
+    kp.add_argument("path")
+    kp.add_argument("--source")
+    kp.add_argument("--title")
+    kp.add_argument("--tags")
+
     sub.add_parser("doctor", parents=[common], help="Check every upstream source.")
     sub.add_parser("sources", parents=[common], help="Print the source catalog summary.")
 
@@ -1357,6 +2527,35 @@ def main(argv: list[str] | None = None) -> int:
         )
     elif args.command == "pubmed":
         data = pubmed_search(args.term, limit=args.limit, sort=args.sort, use_cache=uc, ttl=ttl)
+    elif args.command == "kb":
+        if args.kb_command == "init":
+            data = kb_init(force=args.force)
+        elif args.kb_command == "refresh":
+            data = kb_refresh(extended=args.extended, summaries=args.summaries)
+        elif args.kb_command == "search":
+            data = kb_search(args.query, limit=args.limit, source_type=args.source_type, status=args.status)
+        elif args.kb_command == "get":
+            data = kb_get(args.key)
+        elif args.kb_command == "stats":
+            data = kb_stats()
+        elif args.kb_command == "stale":
+            data = kb_stale(days=args.days)
+        elif args.kb_command == "note":
+            if args.note_command == "add":
+                data = kb_note_add(args.text, title=args.title, tags=args.tags, sources=args.source)
+            else:
+                data = kb_note_list(limit=args.limit)
+        elif args.kb_command == "export":
+            text = kb_export(fmt="jsonl" if args.jsonl else "md", out=args.out)
+            if args.out:
+                print(f"Wrote {args.out}")
+            else:
+                print(text)
+            return 0
+        elif args.kb_command == "ingest":
+            data = kb_ingest(args.path, source=args.source, title=args.title, tags=args.tags)
+        else:
+            parser.error("unknown kb command")
     elif args.command == "guidance":
         data = guidance_search(
             query=args.query,

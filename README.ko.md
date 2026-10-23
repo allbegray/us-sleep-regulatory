@@ -29,6 +29,64 @@ Codex, Claude Code, OpenCode에서 같은 스킬을 사용할 수 있습니다. 
 > Codex의 `/prompts:*` 커스텀 프롬프트는 deprecated입니다. Codex에서는
 > `$us-sleep-regulatory`를 쓰세요. Claude Code와 OpenCode는 `/`로 호출합니다.
 
+### 로컬 지식베이스 먼저
+
+스킬은 `references/`, `references/guidance-registry.json`, `knowledge/seed/`를
+**SQLite + FTS5**로 색인한 로컬 KB를 함께 설치합니다. 첫 `kb` 명령에서 자동
+초기화되며 네트워크가 필요 없습니다.
+
+```bash
+REG="$HOME/.agents/skills/us-sleep-regulatory/scripts/reg.py"
+python3 "$REG" kb stats
+python3 "$REG" kb search "QVO predicate chronic insomnia"
+python3 "$REG" kb get cfr-21-882.5801
+```
+
+Windows:
+
+```powershell
+$REG = "$env:USERPROFILE\.agents\skills\us-sleep-regulatory\scripts\reg.py"
+py -3 $REG kb stats
+py -3 $REG kb search "QVO predicate chronic insomnia"
+py -3 $REG kb get cfr-21-882.5801
+```
+
+API는 다음 경우에만 호출합니다.
+
+- 로컬 KB에 답이 없을 때
+- `kb stats` / `kb stale`에서 해당 문서가 오래됐을 때
+- 사용자가 최신 데이터를 요청할 때
+- 새 가이던스·새 clearance처럼 빠르게 바뀌는 소스를 확인할 때
+
+로컬 KB 갱신:
+
+```bash
+python3 "$REG" kb refresh              # CFR, classification, 510(k), FR
+python3 "$REG" kb refresh --extended   # + FR search, trials, PubMed
+python3 "$REG" kb refresh --summaries  # + 510(k) summary PDF
+```
+
+세션 후 결론을 로컬 KB에 축적:
+
+```bash
+python3 "$REG" kb note add "QVO is prescription-only; DTC model is a fit gap." \
+  --title "QVO vs DTC" --tags "device,qvo,strategy" \
+  --source "https://www.ecfr.gov/current/title-21/section-882.5801"
+python3 "$REG" kb export --format md --out snapshots/knowledge.md
+```
+
+| 콘텐츠 | TTL | 갱신 |
+|---|---|---|
+| CFR | 90일 | `kb refresh` |
+| classification / 510(k) | 30일 | `kb refresh` |
+| guidance registry | 30일 | `kb refresh` |
+| Federal Register | 30일 | `kb refresh` |
+| trials / PubMed | 30일 | `kb refresh --extended` |
+| 510(k) summary | 90일 | `kb refresh --summaries` |
+
+> 검색은 영어 기술 용어(`QVO predicate`, `HIPAA BAA`, `PCCP`)가 가장 정확합니다.
+> 한국어 질문은 에이전트가 영어 검색어로 바꿔 조회합니다.
+
 ### Codex CLI
 
 1. Codex를 재시작합니다.
@@ -360,13 +418,13 @@ powershell -ExecutionPolicy Bypass -File "$env:TEMP\us-sleep-install.ps1" `
 
 ```bash
 ./install.sh \
-  --from https://github.com/allbegray/us-sleep-regulatory/releases/download/v1.2.0/us-sleep-regulatory-v1.2.0.tar.gz \
+  --from https://github.com/allbegray/us-sleep-regulatory/releases/download/v1.3.0/us-sleep-regulatory-v1.3.0.tar.gz \
   --target all --force
 ```
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\install.ps1 `
-  -From https://github.com/allbegray/us-sleep-regulatory/releases/download/v1.2.0/us-sleep-regulatory-v1.2.0.zip `
+  -From https://github.com/allbegray/us-sleep-regulatory/releases/download/v1.3.0/us-sleep-regulatory-v1.3.0.zip `
   -Target all -Force
 ```
 
@@ -376,6 +434,8 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1 `
   스냅샷과 그 안에 정리한 메모는 유지됩니다.
 - `references/`, `scripts/`, `SKILL.md` 등 스킬 본체 파일은 새 버전으로
   덮어씁니다. 직접 수정한 내용이 있다면 별도 repo나 `snapshots/`에 보관하세요.
+- 로컬 KB는 `~/.cache/us-sleep-regulatory/kb.sqlite`에 있어 스킬 디렉터리를
+  덮어써도 유지됩니다. 업데이트 후 `kb refresh`로 새 소스를 반영하세요.
 - 설치된 스킬의 `VERSION` 파일로 실제 버전을 확인할 수 있습니다.
 
 ### 업데이트 후 확인
@@ -418,6 +478,8 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1 -Target all -Uninstall
 - **Sleep domain**: CBT-I, ISI/PSQI, trial design, safety, predicate landscape
 - **AI/ML**: PCCP, AI lifecycle, GenAI discussion paper, human oversight,
   vendor/BAA analysis
+- **Local knowledge base**: `references/`, guidance registry, `knowledge/seed/`를
+  SQLite + FTS5로 색인. 기본 조회는 오프라인이고, API는 `kb refresh`에서만 사용
 - **Audit trail**: 모든 응답에 source, URL, retrieval date, cache status 포함.
   `snapshot`은 날짜별 JSON + Markdown을 생성
 
@@ -435,6 +497,7 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1 -Target all -Uninstall
 ├── CHANGELOG.md
 ├── agents/openai.yaml
 ├── commands/opencode/        # OpenCode /us-sleep-regulatory wrapper
+├── knowledge/seed/           # offline CFR / 510(k) / FR seed
 ├── references/
 ├── scripts/reg.py
 ├── scripts/mcp_server.py
@@ -455,6 +518,7 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1 -Target all -Uninstall
 - [references/sleep-domain.md](references/sleep-domain.md) — CBT-I, endpoint,
   predicate, trial design
 - [references/memo-template.md](references/memo-template.md) — 감사 가능한 메모
+- `knowledge/seed/` — 오프라인 CFR / 510(k) / FR seed 문서
 
 ## 버전 정책
 

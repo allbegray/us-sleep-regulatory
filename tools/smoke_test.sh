@@ -33,6 +33,20 @@ echo "== source health =="
 echo "== guidance registry =="
 "$PY" "$REG" guidance --topic device --format md >/dev/null
 
+echo "== local knowledge base (offline) =="
+KBDIR="$(mktemp -d)"
+export US_REG_KB="$KBDIR/kb.sqlite"
+"$PY" "$REG" kb init --format md >/dev/null
+HITS="$("$PY" "$REG" kb search "QVO predicate" --format json | "$PY" -c 'import json,sys; print(json.load(sys.stdin)["count"])')"
+[[ "$HITS" -gt 0 ]] || { echo "KB search returned no hits" >&2; exit 1; }
+"$PY" "$REG" kb get cfr-21-882.5801 --format md >/dev/null
+"$PY" "$REG" kb note add "test note" --title "Test note" --tags test --format json >/dev/null
+"$PY" "$REG" kb export --jsonl --out "$KBDIR/export.jsonl"
+test -s "$KBDIR/export.jsonl"
+unset US_REG_KB
+rm -rf "$KBDIR"
+echo "KB OK: $HITS hits"
+
 echo "== MCP handshake =="
 printf '%s\n%s\n' \
   '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}' \
@@ -45,8 +59,8 @@ for line in sys.stdin:
     msg = json.loads(line)
     ids[msg.get("id")] = msg
 assert ids[1]["result"]["serverInfo"]["name"] == "us-sleep-regulatory"
-assert len(ids[2]["result"]["tools"]) == 10
-print("MCP OK: 10 tools")
+assert len(ids[2]["result"]["tools"]) == 16
+print("MCP OK: 16 tools")
 '
 
 echo "== installer (temp HOME, all clients) =="
@@ -56,10 +70,12 @@ HOME="$TMPHOME" bash "$INSTALL" --target all --no-doctor >/dev/null
 test -f "$TMPHOME/.agents/skills/us-sleep-regulatory/SKILL.md"
 test -f "$TMPHOME/.agents/skills/us-sleep-regulatory/README.ko.md"
 test -f "$TMPHOME/.agents/skills/us-sleep-regulatory/install.ps1"
+test -f "$TMPHOME/.agents/skills/us-sleep-regulatory/knowledge/seed/cfr-21-882.5801.md"
 test -L "$TMPHOME/.claude/skills/us-sleep-regulatory"
 test -L "$TMPHOME/.config/opencode/skills/us-sleep-regulatory"
 test -f "$TMPHOME/.config/opencode/commands/us-sleep-regulatory.md"
 "$PY" "$TMPHOME/.claude/skills/us-sleep-regulatory/scripts/reg.py" guidance --topic device --format md >/dev/null
+US_REG_KB="$TMPHOME/kb.sqlite" "$PY" "$TMPHOME/.claude/skills/us-sleep-regulatory/scripts/reg.py" kb search "QVO" --format md >/dev/null
 HOME="$TMPHOME" bash "$INSTALL" --target all --uninstall >/dev/null
 test ! -e "$TMPHOME/.agents/skills/us-sleep-regulatory"
 test ! -e "$TMPHOME/.claude/skills/us-sleep-regulatory"
