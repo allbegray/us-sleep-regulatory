@@ -9,6 +9,40 @@ A research and decision skill for an app-based sleep-therapy clinical service in
 the United States. It replaces ad-hoc web searching with official APIs, a
 curated guidance index, and a memo format that keeps the retrieval trail.
 
+## Output language
+
+Mirror the user's language. A Korean question gets a Korean memo, Korean
+headings, and Korean explanations. Keep official document titles, CFR
+citations, K/De Novo numbers, product codes, status labels, and verbatim quoted
+text in English. Gloss an English term on first use, e.g.
+"prescription-only(처방전 필요)". Do not translate binding text; quote it and
+explain it in Korean. Dates stay ISO (`2026-10-23`). If the user mixes
+languages, follow the dominant one; if it is genuinely ambiguous, ask once. See
+`references/output-language.md` for the heading map and glossary.
+
+When you run the CLI for a Korean user, pass `--lang ko` (or export
+`US_REG_LANG=ko`). That localizes the Markdown provenance badge and table
+headers; JSON keys and official source titles stay English.
+
+If the user is a non-expert — a junior developer who says they do not know US
+regulatory, or asks "why do I need this?" — use **beginner mode**: decision
+first, every acronym expanded, a plain-language glossary, and a "what you do
+not need to worry about yet" section. See `references/beginner-mode.md`.
+
+## Query pipeline (non-English users)
+
+1. Detect the user's language.
+2. Translate the question into 1–3 **English retrieval terms**. Never translate
+   K/De Novo numbers, product codes, CFR citations, docket numbers, or URLs.
+3. Query the local KB and official APIs in English. `--lang ko` only formats
+   the output; it does not translate the query.
+4. If the English query returns nothing, retry with the user's original terms
+   (the KB tokenizer is Unicode-aware).
+5. Write the final answer in the user's language, keeping official titles,
+   citations, status labels, and verbatim quotes in English.
+6. Record the English queries in the retrieval trail.
+   See `references/query-pipeline.md` for the term map and examples.
+
 ## Non-negotiable rules
 
 1. **Two tracks, separately.** FDA device status and HIPAA/privacy status are
@@ -34,6 +68,15 @@ curated guidance index, and a memo format that keeps the retrieval trail.
    "FDA approved" claims. 510(k) devices are "cleared," not "approved."
 9. **Not legal advice.** For a filing decision, a novel intended use, a De Novo,
    or a breach response, recommend regulatory counsel.
+10. **Answer in the user's language.** A Korean question gets a Korean memo.
+    Keep official titles, citations, and status labels in English, and run the
+    CLI with `--lang ko` so its Markdown headers and provenance badge match.
+11. **Match expertise, not just language.** A junior developer with no US
+    regulatory background gets the beginner-mode memo: plain Korean, every term
+    defined, next actions before citations. See `references/beginner-mode.md`.
+12. **Translate the query, not the citations.** Search in English, answer in the
+    user's language, and keep K numbers, product codes, CFR citations, and
+    official titles verbatim. See `references/query-pipeline.md`.
 
 ## Workflow
 
@@ -82,7 +125,8 @@ Read `references/device-pathway.md`. Produce a one-page decision table:
 
 The skill ships with a local SQLite knowledge base seeded from `references/`,
 the guidance registry, and `knowledge/seed/`. It answers most questions without
-a network call.
+a network call. Markdown output starts with a `live` / `cache` / `local` /
+`mixed` badge; JSON carries `_meta.fetch`.
 
 ```bash
 SKILL_DIR="/absolute/path/to/us-sleep-regulatory"
@@ -245,6 +289,9 @@ assumption, and knows the next decision.
 | `references/sleep-domain.md` | CBT-I, endpoints, predicates, trial design, safety |
 | `references/guidance-registry.json` | Curated guidance index with last-verified dates |
 | `references/memo-template.md` | Auditable memo and claims matrix |
+| `references/output-language.md` | Korean output conventions, heading map, and glossary |
+| `references/beginner-mode.md` | Plain-language mode for users new to US regulatory |
+| `references/query-pipeline.md` | Korean question → English retrieval → Korean answer |
 | `examples/example-memo-dtc-cbti.md` | Worked example of the memo format (synthetic product; not evidence) |
 | `knowledge/seed/` | Offline CFR, classification, 510(k), FR seed documents |
 | `scripts/reg.py` | Unified CLI + local knowledge base |

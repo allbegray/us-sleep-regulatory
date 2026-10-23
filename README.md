@@ -77,6 +77,12 @@ python3 "$REG" kb search "QVO predicate chronic insomnia"
 python3 "$REG" kb get cfr-21-882.5801
 ```
 
+Every Markdown response starts with a provenance badge — `live`, `cache`,
+`local`, or `mixed` — so you can tell whether the answer came from the network,
+the HTTP cache, or the local KB. JSON responses carry the same signal in
+`_meta.fetch`. Pass `--lang ko` (or set `US_REG_LANG=ko`) to localize the badge
+and table headers; official source titles and status labels stay English.
+
 Windows:
 
 ```powershell
@@ -149,9 +155,10 @@ python3 "$REG" kb get https://www.ecfr.gov/current/title-21/section-882.5801 --s
 | Trials / PubMed | 30 days | `kb refresh --extended` |
 | 510(k) summaries | 90 days | `kb refresh --summaries` |
 
-> Search in English technical terms (`QVO predicate`, `HIPAA BAA`, `PCCP`) for
-> the best results. The agent can translate Korean questions into English
-> search terms.
+> The skill translates a Korean question into English retrieval terms, queries
+> the local KB and official APIs in English, then writes the answer back in
+> Korean. Identifiers (K numbers, product codes, CFR citations) are never
+> translated. See `references/query-pipeline.md`.
 
 ### Codex CLI
 
@@ -472,13 +479,13 @@ Or use a release artifact:
 
 ```bash
 ./install.sh \
-  --from https://github.com/allbegray/us-sleep-regulatory/releases/download/v1.9.0/us-sleep-regulatory-v1.9.0.tar.gz \
+  --from https://github.com/allbegray/us-sleep-regulatory/releases/download/v1.11.0/us-sleep-regulatory-v1.11.0.tar.gz \
   --target all --force
 ```
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\install.ps1 `
-  -From https://github.com/allbegray/us-sleep-regulatory/releases/download/v1.9.0/us-sleep-regulatory-v1.9.0.zip `
+  -From https://github.com/allbegray/us-sleep-regulatory/releases/download/v1.11.0/us-sleep-regulatory-v1.11.0.zip `
   -Target all -Force
 ```
 
@@ -488,16 +495,16 @@ Release artifacts ship with `SHA256SUMS`. `install.sh --sha256` and
 `install.ps1 -Sha256` verify the archive before extracting it.
 
 ```bash
-SHA="$(curl -fsSL https://github.com/allbegray/us-sleep-regulatory/releases/download/v1.9.0/SHA256SUMS | awk '/tar.gz/{print $1}')"
+SHA="$(curl -fsSL https://github.com/allbegray/us-sleep-regulatory/releases/download/v1.11.0/SHA256SUMS | awk '/tar.gz/{print $1}')"
 ./install.sh \
-  --from https://github.com/allbegray/us-sleep-regulatory/releases/download/v1.9.0/us-sleep-regulatory-v1.9.0.tar.gz \
+  --from https://github.com/allbegray/us-sleep-regulatory/releases/download/v1.11.0/us-sleep-regulatory-v1.11.0.tar.gz \
   --target all --sha256 "$SHA"
 ```
 
 ```powershell
 $SHA = (Get-Content .\SHA256SUMS | Select-String '\.zip').Line.Split()[0]
 powershell -ExecutionPolicy Bypass -File .\install.ps1 `
-  -From .\us-sleep-regulatory-v1.9.0.zip -Target all -Sha256 $SHA
+  -From .\us-sleep-regulatory-v1.11.0.zip -Target all -Sha256 $SHA
 ```
 
 ### What an update preserves
@@ -569,6 +576,10 @@ and prints the installed version. Exit code 1 means something is missing.
   network path.
 - **Audit trail**: every response carries source, URL, retrieval date, and cache
   status. `snapshot` writes dated JSON + Markdown.
+- **Output language**: answers in the user's language. Korean memos keep
+  official titles, CFR citations, and status labels in English, with a Korean
+  glossary for the analysis. A beginner mode leads with the decision, next
+  steps, and plain-language definitions for users new to US regulatory.
 
 ## Layout
 
@@ -645,7 +656,7 @@ Release checklist:
 
 ```bash
 python3 -m unittest discover -s tests -v   # offline, no fixtures or network
-python3 tools/eval_retrieval.py            # 25 questions -> expected doc ids
+python3 tools/eval_retrieval.py            # 28 questions -> expected doc ids
 python3 tools/check_freshness.py           # reference review dates
 bash tools/smoke_test.sh --offline         # syntax, versions, registry, KB, evals, MCP, installer
 bash tools/smoke_test.sh                   # + the seven upstream sources

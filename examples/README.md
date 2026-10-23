@@ -4,6 +4,10 @@
 discipline, predicate reasoning, and source table the skill is aiming for. It
 shows what "done" looks like for a DTC CBT-I product.
 
+Korean output follows the same structure; see `references/output-language.md`
+for the heading map, glossary, and the rule that official titles and citations
+stay in English.
+
 Two rules:
 
 1. **It is synthetic.** SleepBridge is fictional. The FDA facts are real public

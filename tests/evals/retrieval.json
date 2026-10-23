@@ -207,6 +207,31 @@
         "guidance:hhs-405d"
       ],
       "top_k": 5
+    },
+    {
+      "id": "beginner-ko",
+      "query": "미국 규제 처음 510k 쉬운 설명",
+      "expect": [
+        "internal:beginner-mode"
+      ],
+      "top_k": 5
+    },
+    {
+      "id": "language-ko",
+      "query": "한국어로 답해줘",
+      "expect": [
+        "internal:output-language",
+        "internal:beginner-mode"
+      ],
+      "top_k": 5
+    },
+    {
+      "id": "korean-particle",
+      "query": "규제를 쉽게 설명해줘",
+      "expect": [
+        "internal:beginner-mode"
+      ],
+      "top_k": 5
     }
   ]
 }

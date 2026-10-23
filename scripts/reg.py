@@ -58,7 +58,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, Callable
 
-VERSION = "1.9.0"
+VERSION = "1.11.0"
+OUTPUT_LANG = os.environ.get("US_REG_LANG", "en").strip().lower()
 SKILL_DIR = Path(__file__).resolve().parent.parent
 CACHE_DIR = Path(os.environ.get("US_REG_CACHE", Path.home() / ".cache" / "us-sleep-regulatory"))
 DEFAULT_TTL = int(os.environ.get("US_REG_CACHE_TTL", "86400"))
@@ -297,6 +298,7 @@ def _meta(source: str, url: str, query: Any, cache: dict, **extra: Any) -> dict:
         "query": query,
         "retrieved_at": utcnow(),
         "cached": bool(cache.get("cached")),
+        "fetch": "cache" if cache.get("cached") else "live",
         "disclaimer": "Public-source research aid, not legal advice. Verify against the current official text.",
     }
     if cache.get("cache_fetched_at"):
@@ -311,12 +313,65 @@ def _meta(source: str, url: str, query: Any, cache: dict, **extra: Any) -> dict:
 # Formatting helpers
 # ---------------------------------------------------------------------------
 
+def _t(english: str, korean: str) -> str:
+    """Pick the human-readable string for the current output language."""
+    return korean if OUTPUT_LANG == "ko" else english
+
+
+HEADERS_KO = {
+    "ID": "ID",
+    "K/De Novo": "K/De Novo",
+    "Device": "기기",
+    "Applicant": "신청인",
+    "Product code": "Product code",
+    "Decision": "결정일",
+    "Class": "Class",
+    "Reg": "규정",
+    "21 CFR": "21 CFR",
+    "GMP exempt": "GMP 면제",
+    "Type": "유형",
+    "Summary": "요약",
+    "Date": "날짜",
+    "Citation": "인용",
+    "Title": "제목",
+    "Document": "문서",
+    "NCT": "NCT",
+    "Status": "상태",
+    "Phase": "단계",
+    "N": "N",
+    "Start": "시작",
+    "Sponsor": "후원",
+    "PMID": "PMID",
+    "Journal": "저널",
+    "Issued": "발행",
+    "Verified": "검증",
+    "Stale": "오래됨",
+    "Action": "작업",
+    "Count": "건수",
+    "Source type": "소스 유형",
+    "Documents": "문서 수",
+    "Retrieved": "조회일",
+    "Age (days)": "경과(일)",
+    "TTL": "TTL",
+    "Tags": "태그",
+    "Path": "경로",
+    "Title/Detail": "제목/상세",
+    "Added": "추가일",
+    "Source": "소스",
+    "Count / Error": "건수 / 오류",
+    "Check": "점검",
+    "Latency (ms)": "지연(ms)",
+    "Detail": "상세",
+}
+
+
 def _md_table(headers: list[str], rows: list[list[Any]]) -> str:
     def cell(value: Any) -> str:
         text = "" if value is None else str(value)
         return text.replace("|", "\\|").replace("\n", " ")
 
-    lines = ["| " + " | ".join(headers) + " |", "|" + "|".join(["---"] * len(headers)) + "|"]
+    labels = [HEADERS_KO.get(header, header) if OUTPUT_LANG == "ko" else header for header in headers]
+    lines = ["| " + " | ".join(labels) + " |", "|" + "|".join(["---"] * len(labels)) + "|"]
     lines += ["| " + " | ".join(cell(v) for v in row) + " |" for row in rows]
     return "\n".join(lines)
 
@@ -643,11 +698,22 @@ def fda_predicates(product_code: str, limit: int = 100, use_cache: bool = True, 
             "QVO is Class II, prescription-only, and the regulation describes an adjunct to clinician-supervised "
             "outpatient treatment. A direct-to-consumer, non-prescription model conflicts with that labeling."
         )
+    fetch_modes = {
+        meta.get("fetch")
+        for meta in (classification.get("_meta"), clearances.get("_meta"))
+        if isinstance(meta, dict) and meta.get("fetch")
+    }
+    for value in cfr.values():
+        if isinstance(value, dict) and isinstance(value.get("_meta"), dict):
+            if value["_meta"].get("fetch"):
+                fetch_modes.add(value["_meta"]["fetch"])
+    fetch_mode = fetch_modes.pop() if len(fetch_modes) == 1 else "mixed"
     out = {
         "_meta": {
             **clearances["_meta"],
             "source": "openFDA device/510k + device/classification + eCFR",
             "product_code": product_code,
+            "fetch": fetch_mode,
         },
         "product_code": product_code,
         "classification": classification.get("results", []),
@@ -1076,6 +1142,7 @@ def guidance_search(
             "source": "Curated guidance registry (local)",
             "url": str(SKILL_DIR / "references" / "guidance-registry.json"),
             "retrieved_at": utcnow(),
+            "fetch": "local",
             "note": note,
             "stale_threshold_days": max_age_days,
             "verification": verification,
@@ -1110,6 +1177,7 @@ def build_snapshot(
             "query": query,
             "tool_version": VERSION,
             "jobs": jobs,
+            "fetch": "mixed",
             "note": "OpenFDA data is a convenience copy; eCFR is official; FDA guidance is nonbinding.",
         },
         "classifications": {},
@@ -1268,7 +1336,7 @@ def build_snapshot(
     ]
     md_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return {
-        "_meta": {"generated_at": bundle["_meta"]["generated_at"], "tool_version": VERSION, "jobs": jobs},
+        "_meta": {"generated_at": bundle["_meta"]["generated_at"], "tool_version": VERSION, "jobs": jobs, "fetch": "mixed"},
         "json": str(json_path),
         "markdown": str(md_path),
         "sections": {k: _section_status(v) for k, v in bundle.items() if k != "_meta"},
@@ -1602,9 +1670,24 @@ def _kb_connect(auto_init: bool = True) -> sqlite3.Connection:
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(path), timeout=15)
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode = WAL")
+    # Setting journal_mode requires an exclusive lock. Only do it when the DB
+    # is not already in WAL, otherwise a concurrent `kb search` can fail with
+    # "database is locked" while another process is writing.
+    try:
+        mode = conn.execute("PRAGMA journal_mode").fetchone()[0]
+        if str(mode).lower() != "wal":
+            conn.execute("PRAGMA journal_mode = WAL")
+    except sqlite3.OperationalError:
+        pass
     conn.execute("PRAGMA synchronous = NORMAL")
-    _kb_schema(conn)
+    # Schema creation is also a write. Run it only when the version is missing
+    # or different, not on every connection.
+    try:
+        schema_version = _kb_meta_get(conn, "schema_version")
+    except sqlite3.OperationalError:
+        schema_version = None
+    if schema_version != KB_SCHEMA_VERSION:
+        _kb_schema(conn)
     if auto_init and not _kb_meta_get(conn, "initialized"):
         _kb_init_conn(conn)
     return conn
@@ -1675,6 +1758,7 @@ def kb_init(force: bool = False) -> dict:
             "source": "local knowledge base",
             "db": str(kb_path()),
             "retrieved_at": utcnow(),
+            "fetch": "local",
             "note": "Offline init from references/, the guidance registry, and knowledge/seed/.",
         },
         "action": "reinit" if force else "init",
@@ -1712,11 +1796,11 @@ FTS_STOPWORDS = frozenset(
 def _search_terms(query: str) -> list[str]:
     """Tokenize a search query for FTS5.
 
-    Common English words are dropped: ORing every token made `QVO OR` match
-    every document containing "or". If the query is *only* stopwords, keep the
-    raw tokens so an intentional search still works.
+    Unicode-aware: a Korean query like "미국 규제" must produce tokens, not an
+    empty list. Common English words are dropped; if the query is *only*
+    stopwords, keep the raw tokens so an intentional search still works.
     """
-    raw = re.findall(r"[A-Za-z0-9][A-Za-z0-9_.-]*", query)
+    raw = re.findall(r"[^\W_][\w.-]*", query, re.UNICODE)
     terms: list[str] = []
     seen: set[str] = set()
     for token in raw:
@@ -1728,6 +1812,50 @@ def _search_terms(query: str) -> list[str]:
             continue
         terms.append(token)
     return (terms or raw)[:12]
+
+
+KO_PARTICLES = (
+    "으로",
+    "에서",
+    "에게",
+    "부터",
+    "까지",
+    "이라고",
+    "라고",
+    "을",
+    "를",
+    "이",
+    "가",
+    "은",
+    "는",
+    "의",
+    "에",
+    "와",
+    "과",
+    "도",
+    "로",
+)
+
+
+def _strip_ko_particle(token: str) -> str:
+    """Drop a trailing Korean particle so "규제를" also matches "규제"."""
+    for suffix in KO_PARTICLES:
+        if token.endswith(suffix) and len(token) > len(suffix) + 1:
+            return token[: -len(suffix)]
+    return token
+
+
+def _like_terms(query: str) -> list[str]:
+    terms: list[str] = []
+    seen: set[str] = set()
+    for token in _search_terms(query):
+        stem = _strip_ko_particle(token)
+        key = stem.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        terms.append(stem)
+    return terms[:6]
 
 
 def _like_pattern(query: str) -> str:
@@ -1785,30 +1913,46 @@ def _kb_search_like(
     source_type: str | None,
     status: str | None,
 ) -> list[dict]:
-    like = _like_pattern(query)
-    sql = """
-        SELECT d.id, d.source, d.source_type, d.title, d.citation, d.url,
-               d.retrieved_at, d.as_of, d.status, d.tags,
-               substr(d.text, 1, 320) AS snippet,
-               0.0 AS rank
-        FROM documents d
-        WHERE (
-            lower(d.title) LIKE ? ESCAPE '\\'
-            OR lower(coalesce(d.citation, '')) LIKE ? ESCAPE '\\'
-            OR lower(coalesce(d.id, '')) LIKE ? ESCAPE '\\'
-            OR lower(d.text) LIKE ? ESCAPE '\\'
-        )
-    """
-    params: list[Any] = [like, like, like, like]
-    if source_type:
-        sql += " AND d.source_type = ?"
-        params.append(source_type)
-    if status:
-        sql += " AND d.status = ?"
-        params.append(status)
-    sql += " ORDER BY d.retrieved_at DESC, d.title LIMIT ?"
-    params.append(limit)
-    return [dict(row) for row in conn.execute(sql, params)]
+    terms = _like_terms(query)
+    if not terms:
+        return []
+
+    def run(join: str) -> list[dict]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        for term in terms:
+            like = _like_pattern(term)
+            clauses.append(
+                "(lower(d.title) LIKE ? ESCAPE '\\' "
+                "OR lower(coalesce(d.citation, '')) LIKE ? ESCAPE '\\' "
+                "OR lower(coalesce(d.id, '')) LIKE ? ESCAPE '\\' "
+                "OR lower(d.text) LIKE ? ESCAPE '\\')"
+            )
+            params.extend([like, like, like, like])
+        sql = f"""
+            SELECT d.id, d.source, d.source_type, d.title, d.citation, d.url,
+                   d.retrieved_at, d.as_of, d.status, d.tags,
+                   substr(d.text, 1, 320) AS snippet,
+                   0.0 AS rank
+            FROM documents d
+            WHERE ({f" {join} ".join(clauses)})
+        """
+        if source_type:
+            sql += " AND d.source_type = ?"
+            params.append(source_type)
+        if status:
+            sql += " AND d.status = ?"
+            params.append(status)
+        sql += " ORDER BY d.retrieved_at DESC, d.title LIMIT ?"
+        params.append(limit)
+        return [dict(row) for row in conn.execute(sql, params)]
+
+    rows = run("AND")
+    if not rows and len(terms) > 1:
+        # A long natural-language Korean query may not match every token.
+        # Fall back to OR so a single core term still finds the document.
+        rows = run("OR")
+    return rows
 
 
 def kb_search(
@@ -1844,6 +1988,7 @@ def kb_search(
             "source": "local knowledge base",
             "db": str(kb_path()),
             "retrieved_at": utcnow(),
+            "fetch": "local",
             "fts": _kb_fts_enabled(conn),
             "note": "Offline search. Use `kb refresh` to update the local copy.",
         },
@@ -1921,6 +2066,7 @@ def kb_stats() -> dict:
             "source": "local knowledge base",
             "db": str(path),
             "retrieved_at": utcnow(),
+            "fetch": "local",
         },
         "db": str(path),
         "db_bytes": path.stat().st_size if path.exists() else 0,
@@ -1957,6 +2103,7 @@ def kb_stale(days: int | None = None) -> dict:
             "source": "local knowledge base",
             "db": str(kb_path()),
             "retrieved_at": utcnow(),
+            "fetch": "local",
             "threshold_days": days,
         },
         "count": len(rows),
@@ -2009,7 +2156,7 @@ def kb_note_add(
     conn.commit()
     conn.close()
     return {
-        "_meta": {"source": "local knowledge base", "db": str(kb_path()), "retrieved_at": utcnow()},
+        "_meta": {"source": "local knowledge base", "db": str(kb_path()), "retrieved_at": utcnow(), "fetch": "local"},
         "id": note_id,
         "title": title or text.splitlines()[0][:80],
         "tags": tags or "",
@@ -2028,7 +2175,7 @@ def kb_note_list(limit: int = 20) -> dict:
         )
     ]
     out = {
-        "_meta": {"source": "local knowledge base", "db": str(kb_path()), "retrieved_at": utcnow()},
+        "_meta": {"source": "local knowledge base", "db": str(kb_path()), "retrieved_at": utcnow(), "fetch": "local"},
         "count": len(rows),
         "results": rows,
     }
@@ -2182,7 +2329,7 @@ def kb_ingest(
             results.append({"path": str(file), "status": "error", "detail": str(exc)[:300]})
     conn.commit()
     out = {
-        "_meta": {"source": "local knowledge base", "db": str(kb_path()), "retrieved_at": utcnow()},
+        "_meta": {"source": "local knowledge base", "db": str(kb_path()), "retrieved_at": utcnow(), "fetch": "local"},
         "count": sum(1 for r in results if r["status"] in {"inserted", "updated", "unchanged"}),
         "results": results,
     }
@@ -2242,7 +2389,7 @@ def kb_follow_add(codes: list[str]) -> dict:
     followed = _kb_followed(conn)
     conn.close()
     return {
-        "_meta": {"source": "local knowledge base", "db": str(kb_path()), "retrieved_at": now},
+        "_meta": {"source": "local knowledge base", "db": str(kb_path()), "retrieved_at": now, "fetch": "local"},
         "added": normalized,
         "followed": followed,
         "_md": _md_table(["Action", "Product code"], [["follow", code] for code in normalized])
@@ -2260,7 +2407,7 @@ def kb_follow_remove(codes: list[str]) -> dict:
     followed = _kb_followed(conn)
     conn.close()
     return {
-        "_meta": {"source": "local knowledge base", "db": str(kb_path()), "retrieved_at": utcnow()},
+        "_meta": {"source": "local knowledge base", "db": str(kb_path()), "retrieved_at": utcnow(), "fetch": "local"},
         "removed": normalized,
         "followed": followed,
         "_md": _md_table(["Action", "Product code"], [["remove", code] for code in normalized])
@@ -2281,6 +2428,7 @@ def kb_follow_list() -> dict:
             "source": "local knowledge base",
             "db": str(kb_path()),
             "retrieved_at": utcnow(),
+            "fetch": "local",
             "note": "Followed codes are refreshed by `kb refresh` alongside QVO/QMZ/LEL.",
         },
         "count": len(followed),
@@ -2609,6 +2757,7 @@ def kb_refresh(
             "source": "local knowledge base refresh",
             "db": str(kb_path()),
             "retrieved_at": utcnow(),
+            "fetch": "local",
             "jobs": jobs,
             "cache_reads": use_cache,
             "cache_ttl_seconds": ttl,
@@ -2678,7 +2827,7 @@ def doctor() -> dict:
     run("accessdata 510(k) PDF", _pdf_check)
     ok = sum(1 for c in checks if c["status"] == "ok")
     out = {
-        "_meta": {"source": "multi-source health check", "retrieved_at": utcnow()},
+        "_meta": {"source": "multi-source health check", "retrieved_at": utcnow(), "fetch": "live"},
         "summary": f"{ok}/{len(checks)} checks passed",
         "checks": checks,
     }
@@ -2693,11 +2842,48 @@ def doctor() -> dict:
 # CLI
 # ---------------------------------------------------------------------------
 
+SOURCES_KO = {
+    "local knowledge base": "로컬 지식베이스",
+    "local knowledge base refresh": "로컬 지식베이스 갱신",
+    "Curated guidance registry (local)": "큐레이션 가이던스 레지스트리 (로컬)",
+    "multi-source health check": "멀티소스 상태 점검",
+}
+
+
+def _fetch_badge(meta: dict) -> str:
+    """One-line provenance badge for Markdown output: live / cache / local / mixed."""
+    if not isinstance(meta, dict) or not meta:
+        return ""
+    mode = str(meta.get("fetch") or "")
+    if mode not in {"live", "cache", "local", "mixed"}:
+        if meta.get("db"):
+            mode = "local"
+        elif meta.get("cached"):
+            mode = "cache"
+        else:
+            mode = "live"
+    modes_ko = {"live": "실시간", "cache": "캐시", "local": "로컬", "mixed": "혼합"}
+    bits = [f"**{_t(mode, modes_ko.get(mode, mode))}**"]
+    if mode == "cache" and meta.get("cache_fetched_at"):
+        bits.append(_t(f"cached {meta['cache_fetched_at']}", f"캐시 시각 {meta['cache_fetched_at']}"))
+    if meta.get("retrieved_at"):
+        bits.append(_t(f"retrieved {meta['retrieved_at']}", f"조회 {meta['retrieved_at']}"))
+    source = meta.get("source")
+    if source and OUTPUT_LANG == "ko":
+        source = SOURCES_KO.get(source, source)
+    label = f"{source} — " if source else ""
+    return f"> {label}" + " · ".join(bits)
+
+
 def _print_output(data: dict, fmt: str = "json", out: str | None = None) -> None:
     if out:
         Path(out).parent.mkdir(parents=True, exist_ok=True)
         Path(out).write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
     if fmt == "md" and data.get("_md"):
+        badge = _fetch_badge(data.get("_meta") or {})
+        if badge:
+            print(badge)
+            print()
         print(data["_md"])
     else:
         print(json.dumps(data, ensure_ascii=False, indent=2))
@@ -2711,6 +2897,12 @@ def _common_parser() -> argparse.ArgumentParser:
     # for `kb export`. Resolving it per command keeps `--format json` honest
     # instead of silently falling back to another default.
     p.add_argument("--format", choices=["json", "md"], default=None)
+    p.add_argument(
+        "--lang",
+        choices=["en", "ko"],
+        default=None,
+        help="Human-readable Markdown language (default: US_REG_LANG or en). JSON keys stay English.",
+    )
     p.add_argument("--out", help="Write full JSON output to this path.")
     p.add_argument("--jobs", type=int, default=DEFAULT_JOBS, help=f"Parallel HTTP workers (default {DEFAULT_JOBS}, max 12).")
     return p
@@ -2850,6 +3042,8 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("sources", parents=[common], help="Print the source catalog summary.")
 
     args = parser.parse_args(argv)
+    global OUTPUT_LANG
+    OUTPUT_LANG = (args.lang or os.environ.get("US_REG_LANG") or "en").strip().lower()
     uc = not args.no_cache
     ttl = args.cache_ttl
     fmt = args.format or "json"

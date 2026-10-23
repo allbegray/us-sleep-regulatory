@@ -8,6 +8,15 @@ review_cadence_days: 120
 Use this template for every substantive answer. It is designed to be auditable:
 each conclusion points to a source, and each source carries a retrieval date.
 
+> **Language.** Write the memo in the user's language. Keep official titles,
+> CFR citations, K/De Novo numbers, product codes, status labels, and verbatim
+> quotes in English. Korean headings and terminology are in
+> `references/output-language.md`.
+>
+> **Audience.** For a user who is new to US regulatory, lead with the
+> beginner-mode summary from `references/beginner-mode.md` (decision, why,
+> next three steps, "not yet") and put the full memo below it.
+
 ## Confidence labels
 
 | Label | Meaning | Example |

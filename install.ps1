@@ -50,7 +50,7 @@ param(
 $ErrorActionPreference = "Stop"
 $SkillName = "us-sleep-regulatory"
 $SkillDisplay = "US Sleep Regulatory"
-$DefaultVersion = "1.9.0"
+$DefaultVersion = "1.11.0"
 
 $Repo = "allbegray/us-sleep-regulatory"
 if ($env:US_SLEEP_REG_REPO) { $Repo = $env:US_SLEEP_REG_REPO }

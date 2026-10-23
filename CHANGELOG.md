@@ -1,5 +1,50 @@
 # Changelog
 
+## 1.11.0 — 2026-10-23
+
+- Added a language policy: the skill answers in the user's language. Korean
+  questions get Korean memos, headings, and explanations, while official
+  document titles, CFR citations, K/De Novo numbers, product codes, status
+  labels, and verbatim quotes stay in English.
+- Added `references/output-language.md` with a Korean heading map, a 30-term
+  glossary, a worked Korean executive summary, and do/don't rules (e.g.
+  "cleared" is not "approved").
+- `references/memo-template.md`, `examples/README.md`, and both READMEs now
+  document the language behavior.
+- The CLI is now actually localized, not just the memo: `--lang ko` (or
+  `US_REG_LANG=ko`) translates provenance badges (`실시간`/`캐시`/`로컬`/`혼합`)
+  and table headers. JSON keys, official titles, and status labels stay English.
+- The `kb` ingests `references/output-language.md` automatically, so the
+  language rules are retrievable offline like the other playbooks.
+- Fixed `database is locked` under concurrent KB use: journal-mode switching and
+  schema creation no longer run on every connection. A regression test holds a
+  write lock while opening a second connection.
+- Added **beginner mode** (`references/beginner-mode.md`) for Korean developers
+  new to US regulatory: a decision-first template, 30-term plain-language
+  glossary, analogies (predicate = "선배 제품"), before/after example, and a
+  "what you do not need to worry about yet" section. `SKILL.md` rule 11 makes
+  expertise calibration explicit.
+- Korean search now works. The tokenizer is Unicode-aware, strips common Korean
+  particles (`규제를` → `규제`), and the LIKE fallback requires all core terms
+  before relaxing to OR. `kb search "초심자"` finds the beginner guide.
+  Retrieval suite grew from 25 to 28 cases.
+- Added `references/query-pipeline.md`: the user's Korean question is translated
+  into English retrieval terms, queried against the English sources, then
+  synthesized back in Korean. Identifiers (K numbers, product codes, CFR cites)
+  are never translated; the English queries are recorded in the trail. Includes
+  a 45-term Korean→English map.
+
+## 1.10.0 — 2026-10-23
+
+- Markdown output now starts with a one-line provenance badge:
+  - `live` — fetched from the network this run
+  - `cache` — served from the HTTP cache (shows `cached_at`)
+  - `local` — read from the local KB or the curated registry (no network)
+  - `mixed` — a composite command (snapshot, predicates) combined sources
+- JSON output gains `_meta.fetch` with the same value. Existing `cached` and
+  `cache_fetched_at` fields are unchanged.
+- Badge is printed once per command, not per row, so tables stay copy-pasteable.
+
 ## 1.9.0 — 2026-10-23
 
 - Added ten sources (35 → 45 registry entries), each verified in a browser with

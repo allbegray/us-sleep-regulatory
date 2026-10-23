@@ -16,6 +16,7 @@ import json
 import os
 import re
 import shutil
+import sqlite3
 import sys
 import tempfile
 import time
@@ -93,6 +94,12 @@ class TestPureHelpers(unittest.TestCase):
         self.assertEqual(reg._search_terms("predicate for the device"), ["predicate", "device"])
         # A query made only of stopwords still searches for them.
         self.assertEqual(reg._search_terms("the of and"), ["the", "of", "and"])
+
+    def test_search_terms_support_korean(self) -> None:
+        self.assertEqual(reg._search_terms("미국 규제 처음"), ["미국", "규제", "처음"])
+        self.assertEqual(reg._strip_ko_particle("규제를"), "규제")
+        self.assertEqual(reg._strip_ko_particle("한국어로"), "한국어")
+        self.assertEqual(reg._strip_ko_particle("미국"), "미국")
 
     def test_like_pattern_escapes_wildcards(self) -> None:
         self.assertEqual(reg._like_pattern("50%_x"), "%50\\%\\_x%")
@@ -209,11 +216,34 @@ class TestKnowledgeBase(unittest.TestCase):
         with self.assertRaises(reg.RegError):
             reg.kb_export(fmt="xml")
 
+    def test_korean_search_finds_beginner_mode(self) -> None:
+        for query, expected in (
+            ("초심자 쉬운 설명", "internal:beginner-mode"),
+            ("미국 규제 처음", "internal:beginner-mode"),
+            ("규제를 쉽게 설명해줘", "internal:beginner-mode"),
+            ("한국어로 답해줘", "internal:output-language"),
+        ):
+            ids = [row["id"] for row in reg.kb_search(query, limit=5)["results"]]
+            self.assertIn(expected, ids, f"{query!r} did not find {expected}: {ids}")
+
     def test_export_writes_json_to_out(self) -> None:
         out = TMP_ROOT / "nested" / "export.json"
         reg.kb_export(fmt="json", out=str(out))
         payload = json.loads(out.read_text(encoding="utf-8"))
         self.assertGreaterEqual(payload["count"], 50)
+
+    def test_connect_while_another_writer_holds_the_lock(self) -> None:
+        # Regression: PRAGMA journal_mode=WAL and CREATE TABLE on every
+        # connection raised "database is locked" during concurrent kb use.
+        reg.kb_init(force=False)
+        writer = sqlite3.connect(str(reg.kb_path()), timeout=1)
+        try:
+            writer.execute("BEGIN IMMEDIATE")
+            conn = reg._kb_connect()
+            conn.close()
+        finally:
+            writer.rollback()
+            writer.close()
 
 
 class TestCliContract(unittest.TestCase):
@@ -222,6 +252,9 @@ class TestCliContract(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         reg.kb_init(force=True)
+
+    def tearDown(self) -> None:
+        reg.OUTPUT_LANG = "en"
 
     def _run(self, argv: list[str]) -> str:
         buffer = io.StringIO()
@@ -249,6 +282,15 @@ class TestCliContract(unittest.TestCase):
         url = "https://www.ecfr.gov/current/title-21/section-882.5801"
         payload = json.loads(self._run(["kb", "get", url, "--source-type", "guidance"]))
         self.assertEqual(payload["document"]["source_type"], "guidance")
+
+    def test_lang_ko_localizes_markdown(self) -> None:
+        text = self._run(["kb", "search", "QVO", "--lang", "ko", "--format", "md"])
+        self.assertIn("**로컬**", text)
+        self.assertIn("| ID | 유형 | 상태 |", text)
+
+    def test_lang_en_is_default(self) -> None:
+        text = self._run(["kb", "search", "QVO", "--format", "md"])
+        self.assertIn("**local**", text)
 
 
 class TestGuidanceRegistry(unittest.TestCase):
@@ -390,6 +432,62 @@ class TestReferenceFreshness(unittest.TestCase):
             self.assertEqual(results["fresh.md"], "ok")
             self.assertEqual(results["stale.md"], "stale")
             self.assertEqual(results["missing.md"], "missing")
+
+
+class TestFetchBadge(unittest.TestCase):
+    def tearDown(self) -> None:
+        reg.OUTPUT_LANG = "en"
+
+    def test_badge_modes(self) -> None:
+        cache_meta = {
+            "source": "openFDA",
+            "fetch": "cache",
+            "cached": True,
+            "cache_fetched_at": "2026-10-23T07:00:00Z",
+            "retrieved_at": "2026-10-23T09:00:00Z",
+        }
+        badge = reg._fetch_badge(cache_meta)
+        self.assertIn("**cache**", badge)
+        self.assertIn("cached 2026-10-23T07:00:00Z", badge)
+        self.assertIn("retrieved 2026-10-23T09:00:00Z", badge)
+
+        self.assertIn("**live**", reg._fetch_badge({"source": "eCFR", "fetch": "live"}))
+        self.assertIn("**local**", reg._fetch_badge({"source": "local knowledge base", "db": "/tmp/kb"}))
+
+    def test_korean_badge_and_headers(self) -> None:
+        reg.OUTPUT_LANG = "ko"
+        badge = reg._fetch_badge(
+            {
+                "source": "eCFR",
+                "fetch": "cache",
+                "cache_fetched_at": "2026-10-23T07:00:00Z",
+                "retrieved_at": "2026-10-23T09:00:00Z",
+            }
+        )
+        self.assertIn("**캐시**", badge)
+        self.assertIn("캐시 시각", badge)
+        self.assertIn("조회", badge)
+
+        table = reg._md_table(["ID", "Status", "Title"], [["x", "Final", "y"]])
+        self.assertIn("| ID | 상태 | 제목 |", table)
+
+    def test_meta_marks_cache_and_live(self) -> None:
+        cached = reg._meta("x", "https://example.test", {}, {"cached": True, "cache_fetched_at": "2026-01-01T00:00:00Z"})
+        self.assertEqual(cached["fetch"], "cache")
+        live = reg._meta("x", "https://example.test", {}, {"cached": False})
+        self.assertEqual(live["fetch"], "live")
+
+    def test_markdown_output_starts_with_badge(self) -> None:
+        output = io.StringIO()
+        data = {
+            "_meta": {"source": "openFDA", "fetch": "live", "retrieved_at": "2026-10-23T09:00:00Z"},
+            "_md": "| A |\n|---|\n| 1 |",
+        }
+        with contextlib.redirect_stdout(output):
+            reg._print_output(data, fmt="md")
+        first_line = output.getvalue().splitlines()[0]
+        self.assertIn("openFDA", first_line)
+        self.assertIn("**live**", first_line)
 
 
 class TestRetrievalEval(unittest.TestCase):
