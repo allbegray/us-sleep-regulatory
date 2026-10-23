@@ -10,7 +10,7 @@ permissions:
   contents: write
 
 jobs:
-  test-and-package:
+  linux:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -41,8 +41,51 @@ jobs:
             dist/*.zip
             dist/SHA256SUMS
 
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install, check, uninstall (PowerShell)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $base = Join-Path $env:RUNNER_TEMP "skill-home"
+          .\install.ps1 -Target all -BaseDir $base -NoDoctor -Force
+
+          $paths = @(
+            "$base\.agents\skills\us-sleep-regulatory\SKILL.md",
+            "$base\.claude\skills\us-sleep-regulatory\SKILL.md",
+            "$base\.config\opencode\skills\us-sleep-regulatory\SKILL.md",
+            "$base\.config\opencode\commands\us-sleep-regulatory.md",
+            "$base\.agents\skills\us-sleep-regulatory\install.ps1",
+            "$base\.agents\skills\us-sleep-regulatory\README.ko.md"
+          )
+          foreach ($p in $paths) {
+            if (-not (Test-Path -LiteralPath $p)) { throw "missing: $p" }
+          }
+
+          python "$base\.agents\skills\us-sleep-regulatory\scripts\reg.py" guidance --topic device --format md | Out-Null
+
+          .\install.ps1 -Target all -BaseDir $base -Uninstall
+          foreach ($p in $paths) {
+            if (Test-Path -LiteralPath $p) { throw "not removed: $p" }
+          }
+
+  release:
+    needs: [linux, windows]
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: us-sleep-regulatory
+          path: dist
+
       - name: Create release
-        if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
           files: |

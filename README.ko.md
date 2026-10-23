@@ -6,198 +6,91 @@
 SaMD, AI/ML 의료기기 소프트웨어, QMSR, HIPAA/FTC** 의무를 공식 API로 조사하는
 Agent Skill입니다.
 
-Codex, Claude Code, OpenCode에서 같은 스킬을 사용할 수 있습니다. 실제 파일은
-`~/.agents/skills/us-sleep-regulatory`에 한 번만 복사하고, Claude Code와
-OpenCode는 심볼릭 링크로 연결합니다.
+Codex, Claude Code, OpenCode에서 같은 스킬을 사용할 수 있습니다. 설치는 한 번만
+하면 되고, 이후에는 `/us-sleep-regulatory` 또는 `$us-sleep-regulatory`로
+호출합니다.
 
 > 리서치 도구 안내이며 법률 자문이 아닙니다. 510(k)/De Novo 제출, 새로운
 > intended use, 유출 대응, 다주 출시 전에는 최신 공식 문서와 regulatory counsel을
 > 함께 확인하세요.
 
-## 설치
+## 사용법
 
-### 한 줄 설치
+### 도구별 호출 방법
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/allbegray/us-sleep-regulatory/main/install.sh \
-  | US_SLEEP_REG_REPO=allbegray/us-sleep-regulatory bash -s -- --target all
-```
+| 도구 | 호출 | 비고 |
+|---|---|---|
+| **Codex CLI** | `$us-sleep-regulatory` | `/skills`로 목록 확인. `/`는 내장 명령용 |
+| **Claude Code** | `/us-sleep-regulatory` | 스킬 이름이 곧 slash command |
+| **OpenCode** | `/us-sleep-regulatory` 또는 `@us-sleep-regulatory` | `/`는 설치되는 command wrapper, `@`는 스킬 멘션 |
+| **MCP 클라이언트** | `scripts/mcp_server.py`의 10개 tool | 스킬 시스템이 없는 클라이언트용 |
+| **CLI** | `py -3 ...\scripts\reg.py` | 터미널에서 직접 실행 |
 
-`--target all`은 세 클라이언트를 모두 설정합니다. `--target`을 생략해도 기본값이
-`all`입니다.
-
-설치 결과:
-
-```
-~/.agents/skills/us-sleep-regulatory           # 실제 파일 (Codex + OpenCode)
-~/.claude/skills/us-sleep-regulatory           # symlink
-~/.config/opencode/skills/us-sleep-regulatory  # symlink
-```
-
-Codex는 `~/.agents/skills`를 사용자 스코프로 읽고, OpenCode는 같은 경로를 global
-compatibility 소스로 읽습니다. Claude Code는 `~/.claude/skills`를 읽으며 symlink를
-따릅니다. 그래서 사본을 세 벌 만들 필요가 없습니다.
-
-### git clone으로 설치
-
-```bash
-git clone https://github.com/allbegray/us-sleep-regulatory.git
-cd us-sleep-regulatory
-./install.sh
-```
-
-### 설치 대상 선택
-
-| `--target` | 실제 설치 위치 | 링크 | 대상 |
-|---|---|---|---|
-| `all` (기본) | `~/.agents/skills/...` | Claude + OpenCode | 세 클라이언트 모두 |
-| `auto` | `~/.agents/skills/...` | 설정된 클라이언트만 | 세 클라이언트 모두 |
-| `codex` | `~/.agents/skills/...` | 없음 | Codex |
-| `claude` | `~/.claude/skills/...` | 없음 | Claude Code |
-| `opencode` | `~/.config/opencode/skills/...` | 없음 | OpenCode |
-| `project` | `./.opencode/skills/...` | `./.agents`, `./.claude` | 현재 repo |
-| `codex-legacy` | `~/.codex/skills/...` | 없음 | 구버전 Codex |
-| `PATH` | 지정한 디렉토리 | 없음 | 커스텀 |
-
-### 설치 확인
-
-```bash
-REG="$HOME/.agents/skills/us-sleep-regulatory/scripts/reg.py"
-cat "$HOME/.agents/skills/us-sleep-regulatory/VERSION"
-python3 "$REG" doctor
-```
-
-`doctor`가 `7/7 checks passed`를 출력하면 openFDA, eCFR, Federal Register,
-ClinicalTrials.gov, PubMed, 510(k) PDF까지 모두 연결된 상태입니다.
-
-## 업데이트
-
-스킬은 계속 버전업됩니다. 업데이트도 설치와 같은 명령으로 합니다.
-
-### 최신 버전으로 업데이트 (권장)
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/allbegray/us-sleep-regulatory/main/install.sh \
-  | US_SLEEP_REG_REPO=allbegray/us-sleep-regulatory bash -s -- --target all --force
-```
-
-`install.sh`의 `DEFAULT_VERSION`이 최신 릴리스 버전을 가리킵니다. `main`의
-설치 스크립트를 다시 받아 실행하면 최신 태그 아카이브를 내려받아 덮어씁니다.
-
-### git clone에서 업데이트
-
-```bash
-cd us-sleep-regulatory
-git pull
-./install.sh --target all --force
-```
-
-### 특정 버전으로 고정
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/allbegray/us-sleep-regulatory/main/install.sh \
-  | US_SLEEP_REG_REPO=allbegray/us-sleep-regulatory US_SLEEP_REG_VERSION=1.0.0 \
-    bash -s -- --target all --force
-```
-
-또는 릴리스 tarball을 직접 지정합니다.
-
-```bash
-./install.sh \
-  --from https://github.com/allbegray/us-sleep-regulatory/releases/download/v1.1.0/us-sleep-regulatory-v1.1.0.tar.gz \
-  --target all --force
-```
-
-### 업데이트할 때 보존되는 것
-
-- `snapshots/`는 업데이트 전에 백업했다가 복원합니다. 날짜별 JSON/Markdown
-  스냅샷과 그 안에 정리한 메모는 유지됩니다.
-- `references/`, `scripts/`, `SKILL.md` 등 스킬 본체 파일은 새 버전으로
-  덮어씁니다. 직접 수정한 내용이 있다면 별도 repo나 `snapshots/`에 보관하세요.
-- 설치된 스킬의 `VERSION` 파일로 실제 버전을 확인할 수 있습니다.
-
-### 업데이트 후 확인
-
-```bash
-REG="$HOME/.agents/skills/us-sleep-regulatory/scripts/reg.py"
-cat "$HOME/.agents/skills/us-sleep-regulatory/VERSION"
-python3 "$REG" doctor
-python3 "$REG" guidance --max-age-days 30 --format md
-```
-
-### 삭제
-
-```bash
-./install.sh --target all --uninstall
-```
-
-## 설치 후 AI 에이전트에서 사용하기
+> Codex의 `/prompts:*` 커스텀 프롬프트는 deprecated입니다. Codex에서는
+> `$us-sleep-regulatory`를 쓰세요. Claude Code와 OpenCode는 `/`로 호출합니다.
 
 ### Codex CLI
 
 1. Codex를 재시작합니다.
-2. `/skills`로 설치된 스킬 목록을 확인합니다.
-3. `$us-sleep-regulatory`로 직접 호출하거나, `$`를 입력해 목록에서 선택합니다.
+2. `/skills`로 설치된 스킬을 확인합니다.
+3. `$us-sleep-regulatory`로 호출하거나 `$`를 입력해 목록에서 선택합니다.
 
 ```text
 $us-sleep-regulatory 우리 앱이 CBT-I 디지털 치료제인데 QVO 510(k) predicate와
 evidence gap을 정리해줘. DTC 모델이라 prescription-only 요건과 충돌하는지도 봐줘.
 ```
 
-Codex에서 스킬이 보이지 않으면:
+스킬이 보이지 않으면:
 
-```bash
-test -f "$HOME/.agents/skills/us-sleep-regulatory/SKILL.md" && echo OK
+```powershell
+Test-Path "$env:USERPROFILE\.agents\skills\us-sleep-regulatory\SKILL.md"
 ```
 
-`OK`가 나오면 Codex를 완전히 종료했다가 다시 실행하세요. `~/.codex`만 사용하는
-구버전이라면 `--target codex-legacy`로 `~/.codex/skills`에 설치할 수 있습니다.
+`True`가 나오면 Codex를 완전히 종료했다가 다시 실행하세요. `~/.codex`만 읽는
+구버전이라면 `install.ps1 -Target codex-legacy` 또는 `install.sh --target
+codex-legacy`를 사용합니다.
 
 ### Claude Code
 
 1. Claude Code를 재시작합니다.
-2. `@us-sleep-regulatory`로 호출합니다.
-3. 스킬 설명과 일치하는 질문을 하면 자동으로 선택될 수도 있습니다.
+2. `/us-sleep-regulatory`로 호출합니다.
 
 ```text
-@us-sleep-regulatory 우리 서비스가 HIPAA covered entity인지 business associate인지
+/us-sleep-regulatory 우리 서비스가 HIPAA covered entity인지 business associate인지
 판단하고, PHI 데이터 맵과 BAA 체크리스트를 만들어줘.
 ```
 
 스킬이 보이지 않으면:
 
-```bash
-ls -l "$HOME/.claude/skills/us-sleep-regulatory"
+```powershell
+Get-ChildItem "$env:USERPROFILE\.claude\skills\us-sleep-regulatory"
 ```
-
-symlink가 `~/.agents/skills/us-sleep-regulatory`를 가리키는지 확인하고 Claude
-Code를 재시작하세요.
 
 ### OpenCode
 
 1. OpenCode를 재시작합니다.
-2. `@us-sleep-regulatory`로 호출하거나, 그냥 규제 질문을 합니다.
-3. 스킬은 설명(description)을 기준으로 자동 노출됩니다.
+2. `/us-sleep-regulatory`로 호출하거나 `@us-sleep-regulatory`로 스킬을 멘션합니다.
 
 ```text
-@us-sleep-regulatory QVO / QMZ / LEL 중 우리 제품에 맞는 product code를 골라줘.
+/us-sleep-regulatory QVO / QMZ / LEL 중 우리 제품에 맞는 product code를 골라줘.
 Somryst와 Sleepio를 predicate로 비교하고, QMSR 기준 evidence gap도 정리해줘.
 ```
 
-OpenCode에서 보이지 않으면:
+`/us-sleep-regulatory`는 설치 시 `~/.config/opencode/commands/`에 추가되는
+래퍼입니다. `@` 멘션은 OpenCode의 스킬 호출 문법입니다.
 
-```bash
-ls -l "$HOME/.config/opencode/skills/us-sleep-regulatory"
-# 또는
-ls -l "$HOME/.agents/skills/us-sleep-regulatory"
+스킬이 보이지 않으면:
+
+```powershell
+Test-Path "$env:USERPROFILE\.config\opencode\skills\us-sleep-regulatory\SKILL.md"
+Test-Path "$env:USERPROFILE\.config\opencode\commands\us-sleep-regulatory.md"
 ```
-
-OpenCode는 `~/.config/opencode/skills`와 `~/.agents/skills`를 모두 읽습니다.
-둘 중 하나에 `SKILL.md`가 있으면 됩니다.
 
 ### MCP 클라이언트
 
-스킬 시스템이 없는 클라이언트는 MCP 서버로 같은 도구를 쓸 수 있습니다.
+스킬 시스템이 없는 클라이언트는 MCP 서버로 같은 도구를 씁니다.
+
+**macOS/Linux:**
 
 ```jsonc
 {
@@ -216,28 +109,56 @@ OpenCode는 `~/.config/opencode/skills`와 `~/.agents/skills`를 모두 읽습�
 }
 ```
 
+**Windows:**
+
+```jsonc
+{
+  "mcp": {
+    "servers": {
+      "us-sleep-reg": {
+        "type": "local",
+        "command": [
+          "python",
+          "C:\\Users\\<you>\\.agents\\skills\\us-sleep-regulatory\\scripts\\mcp_server.py"
+        ],
+        "cwd": "."
+      }
+    }
+  }
+}
+```
+
 제공 도구:
 
 `fda_510k_search`, `fda_510k_get`, `fda_classification`, `fda_predicates`,
 `ecfr_get`, `fr_search`, `trials_search`, `pubmed_search`, `guidance_search`,
 `regulatory_snapshot`
 
-### CLI로 직접 사용
+### CLI
+
+**macOS/Linux:**
 
 ```bash
 REG="$HOME/.agents/skills/us-sleep-regulatory/scripts/reg.py"
-
+python3 "$REG" doctor
 python3 "$REG" predicates --product-code QVO --format md
 python3 "$REG" 510k-get K191716 --fetch-summary --format md
-python3 "$REG" cfr 21 882.5801 --format md
-python3 "$REG" guidance --topic ai --format md
-python3 "$REG" trials --condition insomnia --intervention "cognitive behavioral therapy"
 python3 "$REG" snapshot
+```
+
+**Windows PowerShell:**
+
+```powershell
+$REG = "$env:USERPROFILE\.agents\skills\us-sleep-regulatory\scripts\reg.py"
+py -3 $REG doctor
+py -3 $REG predicates --product-code QVO --format md
+py -3 $REG 510k-get K191716 --fetch-summary --format md
+py -3 $REG snapshot
 ```
 
 ### 좋은 첫 질문
 
-스킬은 바로 결론을 내리지 않고 다음 10가지를 먼저 확인합니다.
+스킬은 결론부터 내리지 않고 다음 10가지를 먼저 확인합니다.
 
 1. 정확한 intended use와 마케팅 문구
 2. 사용자가 환자인지, 임상가인지, 둘 다인지
@@ -260,6 +181,234 @@ python3 "$REG" snapshot
 - 90일 로드맵
 - 출처 URL과 `retrieved_at`이 붙은 근거 표
 
+## 설치
+
+### macOS / Linux
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/allbegray/us-sleep-regulatory/main/install.sh \
+  | US_SLEEP_REG_REPO=allbegray/us-sleep-regulatory bash -s -- --target all
+```
+
+또는 clone:
+
+```bash
+git clone https://github.com/allbegray/us-sleep-regulatory.git
+cd us-sleep-regulatory
+./install.sh
+```
+
+### Windows (PowerShell)
+
+Windows에서는 `install.ps1`을 사용합니다. Git Bash나 WSL 없이 동작하며,
+심볼릭 링크 대신 필요한 위치에 복사합니다.
+
+**1. 스크립트 다운로드 후 실행 (권장)**
+
+```powershell
+Invoke-WebRequest `
+  -Uri https://raw.githubusercontent.com/allbegray/us-sleep-regulatory/main/install.ps1 `
+  -OutFile "$env:TEMP\us-sleep-install.ps1"
+
+powershell -ExecutionPolicy Bypass -File "$env:TEMP\us-sleep-install.ps1" -Target all
+```
+
+**2. 한 줄 실행 (기본값 `-Target all`)**
+
+```powershell
+irm https://raw.githubusercontent.com/allbegray/us-sleep-regulatory/main/install.ps1 | iex
+```
+
+`-Force`, `-Uninstall`, `-Target` 같은 옵션이 필요하면 1번처럼 파일로 받아
+실행하세요.
+
+**3. clone 후 실행**
+
+```powershell
+git clone https://github.com/allbegray/us-sleep-regulatory.git
+cd us-sleep-regulatory
+powershell -ExecutionPolicy Bypass -File .\install.ps1 -Target all
+```
+
+#### Windows 사전 준비
+
+- **Python 3.9+**: [python.org](https://www.python.org/downloads/windows/)에서
+  설치하고 **Add python.exe to PATH**를 체크합니다.
+- 확인:
+
+  ```powershell
+  py -3 --version
+  # 또는
+  python --version
+  ```
+
+- **Execution Policy** 오류가 나면:
+
+  ```powershell
+  powershell -ExecutionPolicy Bypass -File .\install.ps1
+  ```
+
+  또는 현재 세션에서만 허용:
+
+  ```powershell
+  Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+  ```
+
+- **Git**: clone으로 설치할 때만 필요합니다.
+- **Git Bash / WSL**을 쓰는 경우 `install.sh`도 사용할 수 있지만, Windows
+  네이티브 환경에서는 `install.ps1`을 권장합니다.
+
+#### Windows 설치 경로
+
+| 클라이언트 | 경로 |
+|---|---|
+| Codex | `%USERPROFILE%\.agents\skills\us-sleep-regulatory` |
+| Claude Code | `%USERPROFILE%\.claude\skills\us-sleep-regulatory` |
+| OpenCode | `%USERPROFILE%\.config\opencode\skills\us-sleep-regulatory` |
+| OpenCode `/` 커맨드 | `%USERPROFILE%\.config\opencode\commands\us-sleep-regulatory.md` |
+
+`install.ps1`은 위 위치에 각각 복사합니다. Windows에서 디렉토리 심볼릭 링크
+권한을 요구하지 않습니다.
+
+### 설치 대상 선택
+
+| `--target` / `-Target` | 실제 설치 위치 | 링크 | 대상 |
+|---|---|---|---|
+| `all` (기본) | `~/.agents/skills/...` | Claude + OpenCode | 세 클라이언트 모두 |
+| `auto` | `~/.agents/skills/...` | 설정된 클라이언트만 | 세 클라이언트 모두 |
+| `codex` | `~/.agents/skills/...` | 없음 | Codex |
+| `claude` | `~/.claude/skills/...` | 없음 | Claude Code |
+| `opencode` | `~/.config/opencode/skills/...` | 없음 | OpenCode |
+| `project` | `./.opencode/skills/...` | `./.agents`, `./.claude` | 현재 repo |
+| `codex-legacy` | `~/.codex/skills/...` | 없음 | 구버전 Codex |
+| `PATH` | 지정한 디렉토리 | 없음 | 커스텀 |
+
+### 설치 확인
+
+**macOS/Linux:**
+
+```bash
+REG="$HOME/.agents/skills/us-sleep-regulatory/scripts/reg.py"
+cat "$HOME/.agents/skills/us-sleep-regulatory/VERSION"
+python3 "$REG" doctor
+```
+
+**Windows:**
+
+```powershell
+$REG = "$env:USERPROFILE\.agents\skills\us-sleep-regulatory\scripts\reg.py"
+Get-Content "$env:USERPROFILE\.agents\skills\us-sleep-regulatory\VERSION"
+py -3 $REG doctor
+```
+
+`doctor`가 `7/7 checks passed`를 출력하면 openFDA, eCFR, Federal Register,
+ClinicalTrials.gov, PubMed, 510(k) PDF까지 모두 연결된 상태입니다.
+
+## 업데이트
+
+### 최신 버전으로 업데이트 (권장)
+
+**macOS/Linux:**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/allbegray/us-sleep-regulatory/main/install.sh \
+  | US_SLEEP_REG_REPO=allbegray/us-sleep-regulatory bash -s -- --target all --force
+```
+
+**Windows:**
+
+```powershell
+Invoke-WebRequest `
+  -Uri https://raw.githubusercontent.com/allbegray/us-sleep-regulatory/main/install.ps1 `
+  -OutFile "$env:TEMP\us-sleep-install.ps1"
+
+powershell -ExecutionPolicy Bypass -File "$env:TEMP\us-sleep-install.ps1" -Target all -Force
+```
+
+### clone에서 업데이트
+
+```bash
+cd us-sleep-regulatory
+git pull
+./install.sh --target all --force
+```
+
+Windows:
+
+```powershell
+cd us-sleep-regulatory
+git pull
+powershell -ExecutionPolicy Bypass -File .\install.ps1 -Target all -Force
+```
+
+### 특정 버전으로 고정
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/allbegray/us-sleep-regulatory/main/install.sh \
+  | US_SLEEP_REG_REPO=allbegray/us-sleep-regulatory US_SLEEP_REG_VERSION=1.0.0 \
+    bash -s -- --target all --force
+```
+
+Windows:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File "$env:TEMP\us-sleep-install.ps1" `
+  -Target all -Force -Version 1.0.0
+```
+
+또는 릴리스 tarball/zip을 직접 지정합니다.
+
+```bash
+./install.sh \
+  --from https://github.com/allbegray/us-sleep-regulatory/releases/download/v1.2.0/us-sleep-regulatory-v1.2.0.tar.gz \
+  --target all --force
+```
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install.ps1 `
+  -From https://github.com/allbegray/us-sleep-regulatory/releases/download/v1.2.0/us-sleep-regulatory-v1.2.0.zip `
+  -Target all -Force
+```
+
+### 업데이트할 때 보존되는 것
+
+- `snapshots/`는 업데이트 전에 백업했다가 복원합니다. 날짜별 JSON/Markdown
+  스냅샷과 그 안에 정리한 메모는 유지됩니다.
+- `references/`, `scripts/`, `SKILL.md` 등 스킬 본체 파일은 새 버전으로
+  덮어씁니다. 직접 수정한 내용이 있다면 별도 repo나 `snapshots/`에 보관하세요.
+- 설치된 스킬의 `VERSION` 파일로 실제 버전을 확인할 수 있습니다.
+
+### 업데이트 후 확인
+
+```bash
+REG="$HOME/.agents/skills/us-sleep-regulatory/scripts/reg.py"
+cat "$HOME/.agents/skills/us-sleep-regulatory/VERSION"
+python3 "$REG" doctor
+python3 "$REG" guidance --max-age-days 30 --format md
+```
+
+Windows:
+
+```powershell
+$REG = "$env:USERPROFILE\.agents\skills\us-sleep-regulatory\scripts\reg.py"
+Get-Content "$env:USERPROFILE\.agents\skills\us-sleep-regulatory\VERSION"
+py -3 $REG doctor
+```
+
+### 삭제
+
+**macOS/Linux:**
+
+```bash
+./install.sh --target all --uninstall
+```
+
+**Windows:**
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install.ps1 -Target all -Uninstall
+```
+
 ## 스킬이 하는 일
 
 - **FDA device track**: device vs wellness vs CDS, SaMD, product code,
@@ -279,17 +428,19 @@ python3 "$REG" snapshot
 ├── SKILL.md                  # agent workflow / guardrails
 ├── README.md                 # English
 ├── README.ko.md              # 한국어
-├── install.sh                # Codex / Claude / OpenCode installer
-├── VERSION                   # release version
-├── LICENSE                   # MIT
-├── CHANGELOG.md              # release history
-├── agents/openai.yaml        # Codex UI metadata
-├── references/               # source catalog, device, HIPAA, sleep, memo
-├── scripts/reg.py            # unified CLI (stdlib only)
-├── scripts/mcp_server.py     # optional MCP server
-├── snapshots/                # generated JSON + Markdown snapshots
-├── tools/                    # packaging, catalog, smoke test
-└── .github/workflows/        # release + Pages catalog
+├── install.sh                # macOS / Linux / Git Bash
+├── install.ps1               # Windows PowerShell
+├── VERSION
+├── LICENSE
+├── CHANGELOG.md
+├── agents/openai.yaml
+├── commands/opencode/        # OpenCode /us-sleep-regulatory wrapper
+├── references/
+├── scripts/reg.py
+├── scripts/mcp_server.py
+├── snapshots/
+├── tools/
+└── .github/workflows/
 ```
 
 ## 문서
@@ -317,19 +468,19 @@ python3 "$REG" snapshot
 
 ### 릴리스 절차
 
-1. `VERSION`과 `install.sh`의 `DEFAULT_VERSION`을 같은 값으로 올립니다.
+1. `VERSION`과 `install.sh`/`install.ps1`의 기본 버전을 같은 값으로 올립니다.
 2. `CHANGELOG.md`에 변경 내용을 추가합니다.
 3. `bash tools/smoke_test.sh`로 7개 소스, MCP, 설치 3종, 버전 일치를 확인합니다.
 4. `bash tools/package.sh`로 tarball, zip, checksum, catalog를 만듭니다.
 5. commit 후 `vX.Y.Z` 태그를 push합니다.
-6. GitHub Actions가 Release와 Pages catalog를 배포합니다.
+6. GitHub Actions가 Linux/Windows 테스트 후 Release와 Pages catalog를 배포합니다.
 
 ### 사용자 업데이트
 
-- 최신 버전: 설치 때와 같은 한 줄 명령을 다시 실행
-- 버전 고정: `US_SLEEP_REG_VERSION=X.Y.Z` 지정
-- clone: `git pull && ./install.sh --target all --force`
-- 확인: `cat .../VERSION`, `python3 .../scripts/reg.py doctor`
+- 최신 버전: 설치 때와 같은 명령을 `-Force`/`--force`로 다시 실행
+- 버전 고정: `US_SLEEP_REG_VERSION=X.Y.Z` 또는 `-Version X.Y.Z`
+- clone: `git pull` 후 `--force`/`-Force`
+- 확인: `cat .../VERSION`, `reg.py doctor`
 
 ## 검증
 
@@ -343,8 +494,9 @@ bash tools/smoke_test.sh
 - openFDA, eCFR, Federal Register, ClinicalTrials.gov, PubMed, 510(k) PDF
 - guidance registry
 - MCP `initialize` + `tools/list` (10 tools)
-- Codex/Claude/OpenCode 설치·삭제
-- `VERSION` / `DEFAULT_VERSION` 일치
+- Codex/Claude/OpenCode 설치·삭제 (macOS/Linux)
+- Windows `install.ps1` 설치·삭제 (GitHub Actions `windows-latest`)
+- `VERSION` / 기본 버전 일치
 
 ## 라이선스
 

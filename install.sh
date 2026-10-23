@@ -26,7 +26,7 @@ set -euo pipefail
 
 SKILL_NAME="us-sleep-regulatory"
 SKILL_DISPLAY="US Sleep Regulatory"
-DEFAULT_VERSION="1.1.0"
+DEFAULT_VERSION="1.2.0"
 REPO_SLUG="${US_SLEEP_REG_REPO:-}"
 VERSION="${US_SLEEP_REG_VERSION:-$DEFAULT_VERSION}"
 if [[ -n "${US_SLEEP_REG_TARBALL:-}" ]]; then
@@ -43,6 +43,7 @@ REAL_DEST=""
 LINKS=()
 TMP_DIRS=()
 SNAPSHOT_BACKUP=""
+OPENCODE_COMMANDS_DIR=""
 TARGET="all"
 FROM=""
 FORCE=0
@@ -191,7 +192,10 @@ resolve_paths() {
       REAL_DEST="$HOME/.agents/skills/$SKILL_NAME"
       LINKS=()
       [[ -d "$claude_dir" ]] && LINKS+=("$claude_dir/skills/$SKILL_NAME")
-      [[ -d "$opencode_dir" ]] && LINKS+=("$opencode_dir/skills/$SKILL_NAME")
+      if [[ -d "$opencode_dir" ]]; then
+        LINKS+=("$opencode_dir/skills/$SKILL_NAME")
+        OPENCODE_COMMANDS_DIR="$opencode_dir/commands"
+      fi
       ;;
     all)
       REAL_DEST="$HOME/.agents/skills/$SKILL_NAME"
@@ -199,6 +203,7 @@ resolve_paths() {
         "$claude_dir/skills/$SKILL_NAME"
         "$opencode_dir/skills/$SKILL_NAME"
       )
+      OPENCODE_COMMANDS_DIR="$opencode_dir/commands"
       ;;
     codex)
       REAL_DEST="$HOME/.agents/skills/$SKILL_NAME"
@@ -215,6 +220,7 @@ resolve_paths() {
     opencode)
       REAL_DEST="$opencode_dir/skills/$SKILL_NAME"
       LINKS=()
+      OPENCODE_COMMANDS_DIR="$opencode_dir/commands"
       ;;
     project)
       REAL_DEST="$PWD/.opencode/skills/$SKILL_NAME"
@@ -222,6 +228,7 @@ resolve_paths() {
         "$PWD/.agents/skills/$SKILL_NAME"
         "$PWD/.claude/skills/$SKILL_NAME"
       )
+      OPENCODE_COMMANDS_DIR="$PWD/.opencode/commands"
       ;;
     *)
       REAL_DEST="$TARGET"
@@ -251,7 +258,7 @@ copy_tree() {
 
 copy_dist_files() {
   local dest="$1" file
-  for file in README.md README.ko.md LICENSE CHANGELOG.md VERSION install.sh; do
+  for file in README.md README.ko.md LICENSE CHANGELOG.md VERSION install.sh install.ps1; do
     if [[ -f "$SRC_DIR/$file" ]]; then
       cp -f "$SRC_DIR/$file" "$dest/$file"
     elif [[ -f "$SCRIPT_DIR/$file" ]]; then
@@ -294,6 +301,14 @@ make_link() {
   fi
 }
 
+install_opencode_command() {
+  local commands_dir="$1" src="$REAL_DEST/commands/opencode/us-sleep-regulatory.md"
+  [[ -n "$commands_dir" && -f "$src" ]] || return 0
+  mkdir -p "$commands_dir"
+  cp -f "$src" "$commands_dir/us-sleep-regulatory.md"
+  echo "  -> $commands_dir/us-sleep-regulatory.md"
+}
+
 resolve_src
 resolve_paths
 
@@ -315,6 +330,12 @@ if [[ "$UNINSTALL" == 1 ]]; then
       removed=1
     fi
   done
+  if [[ -n "$OPENCODE_COMMANDS_DIR" && -f "$OPENCODE_COMMANDS_DIR/us-sleep-regulatory.md" ]] \
+     && grep -q "us-sleep-regulatory" "$OPENCODE_COMMANDS_DIR/us-sleep-regulatory.md"; then
+    rm -f "$OPENCODE_COMMANDS_DIR/us-sleep-regulatory.md"
+    echo "Removed: $OPENCODE_COMMANDS_DIR/us-sleep-regulatory.md"
+    removed=1
+  fi
   [[ "$removed" == 1 ]] || die "no installed US Sleep Regulatory skill found for target '$TARGET'"
   exit 0
 fi
@@ -355,6 +376,8 @@ for link in "${LINKS[@]:-}"; do
   [[ -n "$link" ]] && make_link "$link" "$REAL_DEST"
 done
 
+install_opencode_command "$OPENCODE_COMMANDS_DIR"
+
 chmod +x "$REAL_DEST/scripts/reg.py" "$REAL_DEST/scripts/mcp_server.py" "$REAL_DEST/install.sh" 2>/dev/null || true
 
 if [[ "$RUN_DOCTOR" == 1 ]]; then
@@ -376,8 +399,8 @@ $(for l in "${LINKS[@]:-}"; do [[ -n "$l" ]] && echo "Link:      $l"; done)
 
 How to invoke:
   Codex CLI     restart Codex, then use \$us-sleep-regulatory or /skills
-  Claude Code   restart Claude Code, then use @us-sleep-regulatory
-  OpenCode      restart OpenCode, then ask or use @us-sleep-regulatory
+  Claude Code   restart Claude Code, then use /us-sleep-regulatory
+  OpenCode      restart OpenCode, then use /us-sleep-regulatory or @us-sleep-regulatory
   CLI           python3 "$REAL_DEST/scripts/reg.py" --help
 
 First commands:

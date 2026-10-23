@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.2.0 — 2026-10-23
+
+- Windows support: native `install.ps1`, PowerShell paths, and a
+  `windows-latest` CI job.
+- Correct trigger documentation: Codex uses `$us-sleep-regulatory`, Claude Code
+  uses `/us-sleep-regulatory`, OpenCode uses `/us-sleep-regulatory` (installed
+  wrapper) or `@us-sleep-regulatory`.
+- Added the OpenCode `/us-sleep-regulatory` command wrapper.
+- Moved the usage guide to the top of the English and Korean READMEs.
+- Release workflow now gates the GitHub Release on both Linux and Windows.
+- `install.ps1` preserves `snapshots/` on `-Force` and copies `README.ko.md` and
+  `install.ps1` into the installed skill.
+
 ## 1.1.0 — 2026-10-23
 
 - Added Korean README (`README.ko.md`) with install, update, and per-agent

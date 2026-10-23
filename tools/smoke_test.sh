@@ -16,8 +16,13 @@ echo "== syntax =="
 echo "== version consistency =="
 VERSION_FILE="$(cat "$DIR/../VERSION")"
 DEFAULT_VERSION="$(grep -oE 'DEFAULT_VERSION="[^"]+"' "$INSTALL" | head -1 | cut -d'"' -f2)"
+PS_DEFAULT_VERSION="$(grep -oE '\$DefaultVersion = "[^"]+"' "$DIR/../install.ps1" | head -1 | cut -d'"' -f2)"
 if [[ "$VERSION_FILE" != "$DEFAULT_VERSION" ]]; then
   echo "VERSION ($VERSION_FILE) != install.sh DEFAULT_VERSION ($DEFAULT_VERSION)" >&2
+  exit 1
+fi
+if [[ "$VERSION_FILE" != "$PS_DEFAULT_VERSION" ]]; then
+  echo "VERSION ($VERSION_FILE) != install.ps1 DefaultVersion ($PS_DEFAULT_VERSION)" >&2
   exit 1
 fi
 echo "VERSION $VERSION_FILE"
@@ -49,13 +54,17 @@ TMPHOME="$(mktemp -d)"
 trap 'rm -rf "$TMPHOME"' EXIT
 HOME="$TMPHOME" bash "$INSTALL" --target all --no-doctor >/dev/null
 test -f "$TMPHOME/.agents/skills/us-sleep-regulatory/SKILL.md"
+test -f "$TMPHOME/.agents/skills/us-sleep-regulatory/README.ko.md"
+test -f "$TMPHOME/.agents/skills/us-sleep-regulatory/install.ps1"
 test -L "$TMPHOME/.claude/skills/us-sleep-regulatory"
 test -L "$TMPHOME/.config/opencode/skills/us-sleep-regulatory"
+test -f "$TMPHOME/.config/opencode/commands/us-sleep-regulatory.md"
 "$PY" "$TMPHOME/.claude/skills/us-sleep-regulatory/scripts/reg.py" guidance --topic device --format md >/dev/null
 HOME="$TMPHOME" bash "$INSTALL" --target all --uninstall >/dev/null
 test ! -e "$TMPHOME/.agents/skills/us-sleep-regulatory"
 test ! -e "$TMPHOME/.claude/skills/us-sleep-regulatory"
 test ! -e "$TMPHOME/.config/opencode/skills/us-sleep-regulatory"
+test ! -e "$TMPHOME/.config/opencode/commands/us-sleep-regulatory.md"
 echo "installer OK: Codex + Claude + OpenCode"
 
 echo "SMOKE OK"
