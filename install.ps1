@@ -7,6 +7,9 @@ Install the US Sleep Regulatory skill for Codex, Claude Code, and OpenCode on Wi
 Copies the skill once per client (no symlinks required). Updates preserve
 snapshots/. Also installs the OpenCode /us-sleep-regulatory command wrapper.
 
+Python 3.9+ is installed automatically (per-user, from python.org) when missing.
+Use -SkipPythonInstall to opt out, or -ForcePythonInstall to repair/reinstall.
+
 .EXAMPLE
 powershell -ExecutionPolicy Bypass -File .\install.ps1
 
@@ -28,7 +31,10 @@ param(
     [string]$Destination = "",
     [switch]$Force,
     [switch]$NoDoctor,
-    [switch]$Uninstall
+    [switch]$Uninstall,
+    [switch]$SkipPythonInstall,
+    [switch]$ForcePythonInstall,
+    [string]$PythonVersion = "3.12.10"
 )
 
 $ErrorActionPreference = "Stop"
@@ -53,6 +59,7 @@ if (-not $BaseDir) {
 }
 
 $TempDirs = New-Object System.Collections.Generic.List[string]
+$script:Python = $null
 $SourceDir = $null
 $FromRoot = $null
 
@@ -205,17 +212,153 @@ function Install-OpenCodeCommand {
     Write-Host "  command: $dest"
 }
 
+function Test-PythonCandidate {
+    param([string]$Exe, [string[]]$Arguments)
+    try {
+        $version = & $Exe @Arguments -c "import sys; print(str(sys.version_info[0]) + '.' + str(sys.version_info[1]))" 2>$null
+        if ($LASTEXITCODE -eq 0 -and $version -match '^([0-9]+)\.([0-9]+)$') {
+            $major = [int]$Matches[1]
+            $minor = [int]$Matches[2]
+            if ($major -gt 3 -or ($major -eq 3 -and $minor -ge 9)) {
+                return [pscustomobject]@{ Exe = $Exe; Args = $Arguments; Version = "$major.$minor" }
+            }
+        }
+    } catch { }
+    return $null
+}
+
+function Find-Python {
+    # Prefer py/python on PATH, but skip the Microsoft Store aliases.
+    foreach ($name in @("py", "python")) {
+        $cmd = Get-Command $name -ErrorAction SilentlyContinue
+        if (-not $cmd) { continue }
+        if ($cmd.Source -match "WindowsApps") { continue }
+        $arguments = @()
+        if ($name -eq "py") { $arguments = @("-3") }
+        $found = Test-PythonCandidate -Exe $cmd.Source -Arguments $arguments
+        if ($found) { return $found }
+    }
+
+    # Known per-user and machine installs.
+    $roots = @(
+        (Join-Path $env:LOCALAPPDATA "Programs\Python"),
+        $env:ProgramFiles,
+        ${env:ProgramFiles(x86)}
+    )
+    foreach ($root in $roots) {
+        if (-not $root -or -not (Test-Path -LiteralPath $root)) { continue }
+        foreach ($name in @("Python314", "Python313", "Python312", "Python311", "Python310", "Python39")) {
+            $exe = Join-Path $root "$name\python.exe"
+            if (Test-Path -LiteralPath $exe) {
+                $found = Test-PythonCandidate -Exe $exe -Arguments @()
+                if ($found) { return $found }
+            }
+        }
+    }
+    return $null
+}
+
+function Install-Python {
+    $arch = "amd64"
+    switch ($env:PROCESSOR_ARCHITECTURE) {
+        "AMD64" { $arch = "amd64" }
+        "ARM64" { $arch = "arm64" }
+        "x86" { $arch = "win32" }
+        default { $arch = "amd64" }
+    }
+    if ($arch -eq "win32") {
+        $fileName = "python-$PythonVersion.exe"
+    } else {
+        $fileName = "python-$PythonVersion-$arch.exe"
+    }
+    $url = "https://www.python.org/ftp/python/$PythonVersion/$fileName"
+    $installer = Join-Path $env:TEMP $fileName
+    Write-Host "Python 3.9+ not found. Installing Python $PythonVersion ($arch, per-user)..."
+    Write-Host "  $url"
+    $oldProgress = $ProgressPreference
+    $ProgressPreference = "SilentlyContinue"
+    try {
+        Invoke-WebRequest -Uri $url -OutFile $installer -UseBasicParsing
+    } finally {
+        $ProgressPreference = $oldProgress
+    }
+
+    $sig = Get-AuthenticodeSignature -FilePath $installer
+    if ($sig.Status -ne "Valid" -or -not $sig.SignerCertificate -or $sig.SignerCertificate.Subject -notmatch "Python Software Foundation") {
+        throw "Python installer signature check failed ($($sig.Status))."
+    }
+
+    $argList = @(
+        "/quiet",
+        "InstallAllUsers=0",
+        "PrependPath=1",
+        "Include_launcher=1",
+        "Include_pip=1",
+        "Include_test=0",
+        "Include_doc=0",
+        "AssociateFiles=0",
+        "Shortcuts=0",
+        "CompileAll=0"
+    )
+    $proc = Start-Process -FilePath $installer -ArgumentList $argList -Wait -PassThru
+    Remove-Item -LiteralPath $installer -Force -ErrorAction SilentlyContinue
+    if ($proc.ExitCode -notin @(0, 3010, 1638)) {
+        throw "Python installer exited with code $($proc.ExitCode)."
+    }
+
+    $machinePath = [Environment]::GetEnvironmentVariable("Path", "Machine")
+    $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+    $env:Path = "$machinePath;$userPath"
+
+    $found = $null
+    for ($i = 0; $i -lt 30; $i++) {
+        $found = Find-Python
+        if ($found) { break }
+        Start-Sleep -Seconds 2
+    }
+    if (-not $found) { throw "Python installer finished but python.exe was not found." }
+    Write-Host "Python installed: $($found.Exe) (version $($found.Version))"
+    return $found
+}
+
+function Ensure-Python {
+    $existing = Find-Python
+    if ($existing -and -not $ForcePythonInstall) { return $existing }
+    if ($SkipPythonInstall) {
+        if ($existing) { return $existing }
+        Write-Warning "Python 3.9+ was not found. Skipping automatic install because -SkipPythonInstall was used."
+        Write-Warning "Install it from https://www.python.org/downloads/windows/ and rerun this installer."
+        return $null
+    }
+    try {
+        $installed = Install-Python
+        if ($installed) { return $installed }
+    } catch {
+        Write-Warning "Automatic Python install failed: $($_.Exception.Message)"
+    }
+    $manual = Find-Python
+    if ($manual) { return $manual }
+    Write-Warning "Python 3.9+ is still unavailable. Install it from https://www.python.org/downloads/windows/ and rerun this installer."
+    return $null
+}
+
+function Get-PythonDisplay {
+    if (-not $script:Python) { return "python" }
+    if ($script:Python.Exe -eq "py") { return "py -3" }
+    if ($script:Python.Exe -match '\s') { return '"' + $script:Python.Exe + '"' }
+    return $script:Python.Exe
+}
+
 function Invoke-Doctor {
     param([string]$SkillDir)
+    if (-not $script:Python) {
+        Write-Warning "Python 3.9+ is unavailable; skipping the doctor check."
+        return
+    }
     $reg = Join-Path $SkillDir "scripts\reg.py"
     if (-not (Test-Path -LiteralPath $reg)) { return }
-    $python = $null
-    $pyArgs = @()
-    if (Get-Command py -ErrorAction SilentlyContinue) { $python = "py"; $pyArgs = @("-3") }
-    elseif (Get-Command python -ErrorAction SilentlyContinue) { $python = "python" }
-    elseif (Get-Command python3 -ErrorAction SilentlyContinue) { $python = "python3" }
-    if (-not $python) { Write-Warning "Python 3.9+ was not found; install it from python.org and run the doctor command manually."; return }
-    & $python @pyArgs $reg doctor --format md
+    $pyArgs = @($script:Python.Args) + @($reg, "doctor", "--format", "md")
+    & $script:Python.Exe @pyArgs
 }
 
 # Paths
@@ -283,6 +426,7 @@ if ($Uninstall) {
 }
 
 $SourceDir = Resolve-Source
+$script:Python = Ensure-Python
 $installedVersion = $Version
 $versionFile = Find-DistFile "VERSION"
 if ($versionFile) { $installedVersion = (Get-Content -LiteralPath $versionFile -Raw).Trim() }
@@ -298,23 +442,25 @@ if (-not $NoDoctor) {
     try { Invoke-Doctor $dests[0] }
     catch {
         Write-Warning "The health check failed. The skill is installed; run it later:"
-        Write-Warning "  py -3 `"$($dests[0])\scripts\reg.py`" doctor"
+        Write-Warning "  $(Get-PythonDisplay) `"$($dests[0])\scripts\reg.py`" doctor"
     }
 }
 
 Write-Host ""
 Write-Host "Installed: $SkillDisplay v$installedVersion"
 foreach ($dest in $dests) { Write-Host "Path: $dest" }
+$py = Get-PythonDisplay
+if ($script:Python) { Write-Host "Python: $($script:Python.Version) ($py)" } else { Write-Host "Python: NOT FOUND" }
 Write-Host ""
 Write-Host "How to invoke:"
 Write-Host "  Codex CLI     `$us-sleep-regulatory  (or /skills to list)"
 Write-Host "  Claude Code   /us-sleep-regulatory"
 Write-Host "  OpenCode      /us-sleep-regulatory  (or @us-sleep-regulatory)"
-Write-Host "  CLI           py -3 `"$($dests[0])\scripts\reg.py`" --help"
+Write-Host "  CLI           $py `"$($dests[0])\scripts\reg.py`" --help"
 Write-Host ""
 Write-Host "First commands:"
-Write-Host "  py -3 `"$($dests[0])\scripts\reg.py`" predicates --product-code QVO --format md"
-Write-Host "  py -3 `"$($dests[0])\scripts\reg.py`" doctor"
+Write-Host "  $py `"$($dests[0])\scripts\reg.py`" predicates --product-code QVO --format md"
+Write-Host "  $py `"$($dests[0])\scripts\reg.py`" doctor"
 Write-Host ""
 Write-Host "Update:    re-run with -Force"
 Write-Host "Uninstall: .\install.ps1 -Target $Target -Uninstall"

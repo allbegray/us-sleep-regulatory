@@ -78,6 +78,18 @@ jobs:
             if (Test-Path -LiteralPath $p) { throw "not removed: $p" }
           }
 
+
+      - name: Auto-install Python path
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $base = Join-Path $env:RUNNER_TEMP "skill-home-python"
+          .\install.ps1 -Target codex -BaseDir $base -NoDoctor -Force -ForcePythonInstall
+          $py = Get-ChildItem "$env:LOCALAPPDATA\Programs\Python" -Filter "python.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $py) { throw "Python was not installed" }
+          & $py.FullName -c "import sys; print(sys.version)"
+          .\install.ps1 -Target codex -BaseDir $base -Uninstall
+
   release:
     needs: [linux, windows]
     if: startsWith(github.ref, 'refs/tags/')
