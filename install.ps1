@@ -82,7 +82,7 @@ function Resolve-Source {
     if ($From) {
         if (Test-Path -LiteralPath $From -PathType Container) {
             $resolved = (Resolve-Path -LiteralPath $From).Path
-            $FromRoot = $resolved
+            $script:FromRoot = $resolved
             $skill = Find-SkillDir $resolved
             if (-not $skill) { $skill = Find-SkillInTree $resolved }
             if (-not $skill) { throw "SKILL.md not found under $From" }
@@ -93,7 +93,7 @@ function Resolve-Source {
             New-Item -ItemType Directory -Force -Path $tmp | Out-Null
             $TempDirs.Add($tmp)
             Expand-Archive -LiteralPath $From -DestinationPath $tmp -Force
-            $FromRoot = $tmp
+            $script:FromRoot = $tmp
             $skill = Find-SkillDir $tmp
             if (-not $skill) { $skill = Find-SkillInTree $tmp }
             if (-not $skill) { throw "SKILL.md not found in $From" }
@@ -107,7 +107,7 @@ function Resolve-Source {
         Write-Host "Downloading $From ..."
         Invoke-WebRequest -Uri $From -OutFile $zip -UseBasicParsing
         Expand-Archive -LiteralPath $zip -DestinationPath $tmp -Force
-        $FromRoot = $tmp
+        $script:FromRoot = $tmp
         $skill = Find-SkillDir $tmp
         if (-not $skill) { $skill = Find-SkillInTree $tmp }
         if (-not $skill) { throw "SKILL.md not found in $From" }
@@ -115,7 +115,7 @@ function Resolve-Source {
     }
 
     $local = Find-SkillDir $ScriptRoot
-    if ($local) { $FromRoot = $ScriptRoot; return $local }
+    if ($local) { $script:FromRoot = $ScriptRoot; return $local }
 
     $tmp = Join-Path $env:TEMP ("us-sleep-src-" + [guid]::NewGuid().ToString("N"))
     New-Item -ItemType Directory -Force -Path $tmp | Out-Null
@@ -125,7 +125,7 @@ function Resolve-Source {
     Write-Host "Downloading $url ..."
     Invoke-WebRequest -Uri $url -OutFile $zip -UseBasicParsing
     Expand-Archive -LiteralPath $zip -DestinationPath $tmp -Force
-    $FromRoot = $tmp
+    $script:FromRoot = $tmp
     $skill = Find-SkillDir $tmp
     if (-not $skill) { $skill = Find-SkillInTree $tmp }
     if (-not $skill) { throw "SKILL.md not found in the downloaded archive" }
@@ -134,11 +134,10 @@ function Resolve-Source {
 
 function Find-DistFile {
     param([string]$Name)
-    $candidates = @(
-        (Join-Path $SourceDir $Name),
-        (Join-Path $FromRoot $Name),
-        (Join-Path $ScriptRoot $Name)
-    )
+    $candidates = @()
+    foreach ($base in @($SourceDir, $FromRoot, $ScriptRoot)) {
+        if ($base) { $candidates += (Join-Path $base $Name) }
+    }
     foreach ($candidate in $candidates) {
         if ($candidate -and (Test-Path -LiteralPath $candidate)) { return $candidate }
     }
