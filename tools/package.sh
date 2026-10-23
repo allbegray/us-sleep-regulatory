@@ -25,8 +25,10 @@ echo "Staging $NAME"
 tar -C "$SKILL_SRC" \
   --exclude='.git' \
   --exclude='.github' \
+  --exclude='.idea' \
   --exclude='dist' \
   --exclude='tools' \
+  --exclude='tests' \
   --exclude='.gitignore' \
   --exclude='__pycache__' \
   --exclude='*.pyc' \

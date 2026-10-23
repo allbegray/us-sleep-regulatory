@@ -22,7 +22,7 @@ import json
 import sys
 from pathlib import Path
 
-SKIP_PARTS = {"__pycache__", ".git", ".github", "dist", ".DS_Store"}
+SKIP_PARTS = {"__pycache__", ".git", ".github", "dist", ".DS_Store", ".idea", "tests"}
 SKIP_SUFFIXES = {".pyc", ".pyo"}
 # Maintainer-only files: keep them in the release tarball, omit from the
 # OpenCode HTTP catalog so end-user installs stay small.

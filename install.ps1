@@ -20,13 +20,14 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1 -Target all -Force
 powershell -ExecutionPolicy Bypass -File .\install.ps1 -Uninstall
 
 .EXAMPLE
-powershell -ExecutionPolicy Bypass -File .\install.ps1 -From .\us-sleep-regulatory-v1.2.0.zip
+powershell -ExecutionPolicy Bypass -File .\install.ps1 -From .\us-sleep-regulatory-v1.2.0.zip -Sha256 <hex>
 #>
 [CmdletBinding()]
 param(
     [string]$Target = "all",
     [string]$BaseDir = "",
     [string]$From = "",
+    [string]$Sha256 = "",
     [string]$Version = "",
     [string]$Destination = "",
     [switch]$Force,
@@ -40,10 +41,11 @@ param(
 $ErrorActionPreference = "Stop"
 $SkillName = "us-sleep-regulatory"
 $SkillDisplay = "US Sleep Regulatory"
-$DefaultVersion = "1.5.0"
+$DefaultVersion = "1.6.0"
 
 $Repo = "allbegray/us-sleep-regulatory"
 if ($env:US_SLEEP_REG_REPO) { $Repo = $env:US_SLEEP_REG_REPO }
+if (-not $Sha256 -and $env:US_SLEEP_REG_SHA256) { $Sha256 = $env:US_SLEEP_REG_SHA256 }
 if (-not $Version) {
     if ($env:US_SLEEP_REG_VERSION) { $Version = $env:US_SLEEP_REG_VERSION }
     else { $Version = $DefaultVersion }
@@ -85,6 +87,16 @@ function Find-SkillInTree {
     return $null
 }
 
+function Assert-Checksum {
+    param([string]$Path)
+    if (-not $Sha256) { return }
+    $actual = (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash
+    if ($actual.ToUpperInvariant() -ne $Sha256.ToUpperInvariant()) {
+        throw "checksum mismatch for $(Split-Path -Leaf $Path): expected $($Sha256.ToLowerInvariant()), got $($actual.ToLowerInvariant())"
+    }
+    Write-Host "  checksum OK: $(Split-Path -Leaf $Path)"
+}
+
 function Resolve-Source {
     if ($From) {
         if (Test-Path -LiteralPath $From -PathType Container) {
@@ -99,6 +111,7 @@ function Resolve-Source {
             $tmp = Join-Path $env:TEMP ("us-sleep-src-" + [guid]::NewGuid().ToString("N"))
             New-Item -ItemType Directory -Force -Path $tmp | Out-Null
             $TempDirs.Add($tmp)
+            Assert-Checksum $From
             Expand-Archive -LiteralPath $From -DestinationPath $tmp -Force
             $script:FromRoot = $tmp
             $skill = Find-SkillDir $tmp
@@ -113,6 +126,7 @@ function Resolve-Source {
         $zip = Join-Path $tmp "download.zip"
         Write-Host "Downloading $From ..."
         Invoke-WebRequest -Uri $From -OutFile $zip -UseBasicParsing
+        Assert-Checksum $zip
         Expand-Archive -LiteralPath $zip -DestinationPath $tmp -Force
         $script:FromRoot = $tmp
         $skill = Find-SkillDir $tmp
@@ -131,6 +145,7 @@ function Resolve-Source {
     $zip = Join-Path $tmp "download.zip"
     Write-Host "Downloading $url ..."
     Invoke-WebRequest -Uri $url -OutFile $zip -UseBasicParsing
+    Assert-Checksum $zip
     Expand-Archive -LiteralPath $zip -DestinationPath $tmp -Force
     $script:FromRoot = $tmp
     $skill = Find-SkillDir $tmp

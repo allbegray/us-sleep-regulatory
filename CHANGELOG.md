@@ -1,5 +1,43 @@
 # Changelog
 
+## 1.6.0 — 2026-10-23
+
+- Verified all 29 guidance-registry entries against their sources and added
+  `verified_via` evidence to each. Four data errors found and fixed:
+  the cybersecurity guidance URL (new QMS slug), the off-the-shelf software URL
+  and issue date (August 2023, not September 2019), the retired SaMD clinical
+  evaluation page (now cited via its Federal Register notice), and the IMDRF
+  N12 URL. `tools/validate_registry.py --strict` now passes with 0 warnings.
+- `tools/validate_registry.py` checks schema, status vocabulary, duplicate ids,
+  shared URLs, future dates, and unsupported bulk date bumps. A shared
+  `last_verified` date is accepted when every entry records `verified_via`.
+- `guidance` reports `_meta.verification` (`per-entry`, `bulk-evidenced`, or
+  `bulk`) plus evidence coverage.
+- Fixed `kb export --format json`: the flag is honoured (a full JSON document),
+  `--jsonl` remains NDJSON, and the default is still Markdown.
+- `kb get` now disambiguates shared URLs: deterministic id order,
+  `_meta.ambiguous` + `_meta.alternatives`, and a new `--source-type` flag
+  (also exposed on the MCP `kb_get` tool).
+- `kb refresh` honours `--no-cache` / `--cache-ttl`. Cached responses inside the
+  TTL are reused by default, so a repeated refresh no longer re-fetches every
+  source; `--no-cache` forces live requests.
+- `kb search` drops English stopwords before building the FTS query and escapes
+  `%`/`_` in the LIKE fallback. `QVO" OR "*` no longer matches every document
+  containing "or".
+- Added an offline test suite in `tests/` (KB, CLI contract, cache, search,
+  refresh wiring, registry, docs/version drift, MCP surface) and a PR/push CI
+  workflow.
+- `tools/smoke_test.sh --offline` runs everything except `doctor` and the live
+  refresh. Version consistency now also checks `scripts/reg.py`.
+- `install.sh --sha256` / `install.ps1 -Sha256` (or `US_SLEEP_REG_SHA256`)
+  verify a downloaded or local archive before extracting it. Downloads now go
+  to a temp file instead of a `curl | tar` pipe.
+- `doctor` verifies the 510(k) PDF with a HEAD request instead of re-downloading
+  460 KB on every run.
+- Cache writes are atomic, and retry backoff no longer holds the per-host
+  semaphore while sleeping.
+- `install.sh --uninstall` no longer requires a resolvable source directory.
+
 ## 1.5.0 — 2026-10-23
 
 - Parallelized official-source fetches in `snapshot` and `kb refresh` using a

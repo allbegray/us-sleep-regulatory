@@ -102,7 +102,12 @@ Refresh the local copy:
 python3 "$REG" kb refresh --jobs 6              # CFR, classifications, 510(k), FR
 python3 "$REG" kb refresh --extended --jobs 6   # + FR search, trials, PubMed
 python3 "$REG" kb refresh --summaries --jobs 6  # + 510(k) summary PDFs
+python3 "$REG" kb refresh --no-cache            # ignore the HTTP cache, fetch live
 ```
+
+`kb refresh` reuses HTTP cache entries inside `--cache-ttl` (default 24h,
+`US_REG_CACHE_TTL`), so running it twice in a row is cheap and idempotent. Pass
+`--no-cache` (or `--cache-ttl 0`) when you need every source re-fetched.
 
 Save durable conclusions after a session:
 
@@ -110,7 +115,18 @@ Save durable conclusions after a session:
 python3 "$REG" kb note add "QVO is prescription-only; DTC model is a fit gap." \
   --title "QVO vs DTC" --tags "device,qvo,strategy" \
   --source "https://www.ecfr.gov/current/title-21/section-882.5801"
-python3 "$REG" kb export --format md --out snapshots/knowledge.md
+python3 "$REG" kb export --format md   --out snapshots/knowledge.md
+python3 "$REG" kb export --format json --out snapshots/knowledge.json
+python3 "$REG" kb export --jsonl       --out snapshots/knowledge.jsonl
+```
+
+When two documents share a URL (a CFR section and its guidance-registry stub
+do), `kb get` picks the first by id and reports `_meta.ambiguous` plus
+`_meta.alternatives`. Pass `--source-type cfr` or use the exact id to choose.
+
+```bash
+python3 "$REG" kb get cfr-21-882.5801 --format md
+python3 "$REG" kb get https://www.ecfr.gov/current/title-21/section-882.5801 --source-type guidance
 ```
 
 | Content | TTL | Refresh |
@@ -237,7 +253,8 @@ If the client has no skill system, run the MCP server.
 
 Tools: `fda_510k_search`, `fda_510k_get`, `fda_classification`,
 `fda_predicates`, `ecfr_get`, `fr_search`, `trials_search`, `pubmed_search`,
-`guidance_search`, `regulatory_snapshot`.
+`guidance_search`, `regulatory_snapshot`, `kb_search`, `kb_get`, `kb_stats`,
+`kb_note_add`, `kb_refresh`, `kb_init`.
 
 ### CLI
 
@@ -444,14 +461,32 @@ Or use a release artifact:
 
 ```bash
 ./install.sh \
-  --from https://github.com/allbegray/us-sleep-regulatory/releases/download/v1.5.0/us-sleep-regulatory-v1.5.0.tar.gz \
+  --from https://github.com/allbegray/us-sleep-regulatory/releases/download/v1.6.0/us-sleep-regulatory-v1.6.0.tar.gz \
   --target all --force
 ```
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\install.ps1 `
-  -From https://github.com/allbegray/us-sleep-regulatory/releases/download/v1.5.0/us-sleep-regulatory-v1.5.0.zip `
+  -From https://github.com/allbegray/us-sleep-regulatory/releases/download/v1.6.0/us-sleep-regulatory-v1.6.0.zip `
   -Target all -Force
+```
+
+### Verify the download
+
+Release artifacts ship with `SHA256SUMS`. `install.sh --sha256` and
+`install.ps1 -Sha256` verify the archive before extracting it.
+
+```bash
+SHA="$(curl -fsSL https://github.com/allbegray/us-sleep-regulatory/releases/download/v1.6.0/SHA256SUMS | awk '/tar.gz/{print $1}')"
+./install.sh \
+  --from https://github.com/allbegray/us-sleep-regulatory/releases/download/v1.6.0/us-sleep-regulatory-v1.6.0.tar.gz \
+  --target all --sha256 "$SHA"
+```
+
+```powershell
+$SHA = (Get-Content .\SHA256SUMS | Select-String '\.zip').Line.Split()[0]
+powershell -ExecutionPolicy Bypass -File .\install.ps1 `
+  -From .\us-sleep-regulatory-v1.6.0.zip -Target all -Sha256 $SHA
 ```
 
 ### What an update preserves
@@ -526,9 +561,11 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1 -Target all -Uninstall
 │   ├── reg.py
 │   └── mcp_server.py
 ├── snapshots/
+├── tests/
 ├── tools/
 │   ├── package.sh
 │   ├── build_catalog.py
+│   ├── validate_registry.py
 │   └── smoke_test.sh
 └── .github/workflows/
 ```
@@ -557,23 +594,27 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1 -Target all -Uninstall
 
 Release checklist:
 
-1. Bump `VERSION`, `install.sh` `DEFAULT_VERSION`, and `install.ps1`
-   `$DefaultVersion`.
+1. Bump `VERSION`, `install.sh` `DEFAULT_VERSION`, `install.ps1`
+   `$DefaultVersion`, and `scripts/reg.py` `VERSION`.
 2. Add a `CHANGELOG.md` entry.
-3. Run `bash tools/smoke_test.sh`.
-4. Run `bash tools/package.sh`.
-5. Commit, tag `vX.Y.Z`, push. GitHub Actions tests Linux and Windows, creates the
+3. Run `python3 -m unittest discover -s tests` and
+   `bash tools/smoke_test.sh --offline`.
+4. Run `bash tools/smoke_test.sh` (network) and `bash tools/package.sh`.
+5. Verify registry entries individually: `python3 tools/validate_registry.py --strict`.
+6. Commit, tag `vX.Y.Z`, push. GitHub Actions tests Linux and Windows, creates the
    release, and deploys the catalog.
 
 ## Verify
 
 ```bash
-bash tools/smoke_test.sh
+python3 -m unittest discover -s tests -v   # offline, no fixtures or network
+bash tools/smoke_test.sh --offline         # syntax, versions, registry, KB, MCP, installer
+bash tools/smoke_test.sh                   # + the seven upstream sources
 ```
 
-Checks Python syntax, the seven upstream sources, the guidance registry, the MCP
-handshake, the installer/uninstaller for all three clients, and version
-consistency. The release workflow also runs `install.ps1` on `windows-latest`.
+`--offline` is the PR/CI mode: it skips `doctor` and the live refresh, so a
+flaky FDA endpoint cannot block a merge. The release workflow runs the full
+networked smoke test, and `install.ps1` on `windows-latest`.
 
 ## License
 

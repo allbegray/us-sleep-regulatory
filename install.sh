@@ -26,7 +26,7 @@ set -euo pipefail
 
 SKILL_NAME="us-sleep-regulatory"
 SKILL_DISPLAY="US Sleep Regulatory"
-DEFAULT_VERSION="1.5.0"
+DEFAULT_VERSION="1.6.0"
 REPO_SLUG="${US_SLEEP_REG_REPO:-}"
 VERSION="${US_SLEEP_REG_VERSION:-$DEFAULT_VERSION}"
 if [[ -n "${US_SLEEP_REG_TARBALL:-}" ]]; then
@@ -49,6 +49,7 @@ FROM=""
 FORCE=0
 RUN_DOCTOR=1
 UNINSTALL=0
+EXPECTED_SHA256="${US_SLEEP_REG_SHA256:-}"
 
 cleanup() {
   local dir
@@ -80,6 +81,7 @@ Targets:
 Options:
   --target TARGET       See above. Default: all.
   --from PATH_OR_URL    Install from a local directory or a .tar.gz URL.
+  --sha256 HEX          Verify the archive's SHA-256 before installing.
   --force               Overwrite an existing installation or link.
   --no-doctor           Skip the post-install source health check.
   --uninstall           Remove the installed skill from the selected target.
@@ -90,6 +92,7 @@ Environment:
                         the script is piped and no local SKILL.md exists.
   US_SLEEP_REG_VERSION  Version to download (default ${DEFAULT_VERSION}).
   US_SLEEP_REG_TARBALL  Explicit tarball URL (overrides repo/version).
+  US_SLEEP_REG_SHA256   Expected SHA-256 for the archive (same as --sha256).
 
 Examples:
   ./install.sh
@@ -102,6 +105,34 @@ EOF
 
 die() { echo "ERROR: $*" >&2; exit 1; }
 
+sha256_of() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{print $1}'
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$1" | awk '{print $1}'
+  else
+    return 1
+  fi
+}
+
+verify_sha256() {
+  local file="$1" actual expected
+  [[ -n "$EXPECTED_SHA256" ]] || return 0
+  actual="$(sha256_of "$file")" || die "no SHA-256 tool found (install shasum or sha256sum)"
+  expected="$(printf '%s' "$EXPECTED_SHA256" | tr '[:upper:]' '[:lower:]')"
+  actual="$(printf '%s' "$actual" | tr '[:upper:]' '[:lower:]')"
+  [[ "$actual" == "$expected" ]] || die "checksum mismatch for $(basename "$file"): expected $expected, got $actual"
+  echo "  checksum OK: $(basename "$file")"
+}
+
+download_tarball() {
+  local url="$1" dest="$2"
+  echo "Downloading $url ..."
+  curl -fsSL --retry 2 "$url" -o "$dest" || die "download failed: $url"
+  verify_sha256 "$dest"
+}
+
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --target)
@@ -112,6 +143,10 @@ while [[ $# -gt 0 ]]; do
       [[ $# -ge 2 ]] || die "--from needs a value"
       FROM="$2"; shift 2 ;;
     --from=*) FROM="${1#*=}"; shift ;;
+    --sha256)
+      [[ $# -ge 2 ]] || die "--sha256 needs a value"
+      EXPECTED_SHA256="$2"; shift 2 ;;
+    --sha256=*) EXPECTED_SHA256="${1#*=}"; shift ;;
     --force) FORCE=1; shift ;;
     --no-doctor) RUN_DOCTOR=0; shift ;;
     --uninstall) UNINSTALL=1; shift ;;
@@ -149,6 +184,7 @@ resolve_src() {
       local tmp found
       tmp="$(mktemp -d)"
       TMP_DIRS+=("$tmp")
+      verify_sha256 "$FROM"
       tar -xzf "$FROM" -C "$tmp"
       found="$(find "$tmp" -maxdepth 4 -name SKILL.md -print -quit)"
       [[ -n "$found" ]] || die "SKILL.md not found in $FROM"
@@ -157,8 +193,8 @@ resolve_src() {
       local tmp found
       tmp="$(mktemp -d)"
       TMP_DIRS+=("$tmp")
-      echo "Downloading $FROM ..."
-      curl -fsSL "$FROM" | tar -xz -C "$tmp"
+      download_tarball "$FROM" "$tmp/us-sleep-regulatory.tar.gz"
+      tar -xzf "$tmp/us-sleep-regulatory.tar.gz" -C "$tmp"
       found="$(find "$tmp" -maxdepth 4 -name SKILL.md -print -quit)"
       [[ -n "$found" ]] || die "SKILL.md not found in $FROM"
       SRC_DIR="$(dirname "$found")"
@@ -173,8 +209,8 @@ resolve_src() {
       local tmp found
       tmp="$(mktemp -d)"
       TMP_DIRS+=("$tmp")
-      echo "Downloading $RELEASE_TARBALL ..."
-      curl -fsSL "$RELEASE_TARBALL" | tar -xz -C "$tmp" || die "download failed: $RELEASE_TARBALL"
+      download_tarball "$RELEASE_TARBALL" "$tmp/us-sleep-regulatory.tar.gz"
+      tar -xzf "$tmp/us-sleep-regulatory.tar.gz" -C "$tmp"
       found="$(find "$tmp" -maxdepth 4 -name SKILL.md -print -quit)"
       [[ -n "$found" ]] || die "SKILL.md not found in the downloaded archive"
       SRC_DIR="$(dirname "$found")"
@@ -247,6 +283,7 @@ copy_tree() {
   tar -C "$src" \
     --exclude='.git' \
     --exclude='.github' \
+    --exclude='.idea' \
     --exclude='dist' \
     --exclude='__pycache__' \
     --exclude='*.pyc' \
@@ -309,7 +346,6 @@ install_opencode_command() {
   echo "  -> $commands_dir/us-sleep-regulatory.md"
 }
 
-resolve_src
 resolve_paths
 
 if [[ "$UNINSTALL" == 1 ]]; then
@@ -340,6 +376,7 @@ if [[ "$UNINSTALL" == 1 ]]; then
   exit 0
 fi
 
+resolve_src
 check_python
 VERSION="$(cat "$SRC_DIR/VERSION" 2>/dev/null || cat "$SCRIPT_DIR/VERSION" 2>/dev/null || echo "$DEFAULT_VERSION")"
 

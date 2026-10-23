@@ -58,7 +58,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, Callable
 
-VERSION = "1.5.0"
+VERSION = "1.6.0"
 SKILL_DIR = Path(__file__).resolve().parent.parent
 CACHE_DIR = Path(os.environ.get("US_REG_CACHE", Path.home() / ".cache" / "us-sleep-regulatory"))
 DEFAULT_TTL = int(os.environ.get("US_REG_CACHE_TTL", "86400"))
@@ -137,13 +137,15 @@ def _cache_read(key: str, ttl: int) -> dict | None:
 def _cache_write(key: str, url: str, params: dict | None, body: Any) -> None:
     path = _cache_path(key)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps(
-            {"url": url, "params": params or {}, "fetched_at": time.time(), "body": body},
-            ensure_ascii=False,
-        ),
-        encoding="utf-8",
+    payload = json.dumps(
+        {"url": url, "params": params or {}, "fetched_at": time.time(), "body": body},
+        ensure_ascii=False,
     )
+    # Atomic replace: concurrent refreshes must never leave a half-written JSON
+    # file for the next reader to trip over.
+    tmp = path.with_name(f"{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+    tmp.write_text(payload, encoding="utf-8")
+    os.replace(tmp, path)
 
 
 def _host_semaphore(host: str) -> threading.Semaphore:
@@ -176,42 +178,45 @@ def _request(
     host = urllib.parse.urlparse(url).netloc
     last_error: Exception | None = None
     for attempt in range(retries):
-        with _host_semaphore(host):
-            try:
+        # Hold the per-host slot only for the request itself. Sleeping while
+        # holding it would serialise every other thread of the same host
+        # behind one 429.
+        try:
+            with _host_semaphore(host):
                 with urllib.request.urlopen(req, timeout=timeout) as resp:
                     data = resp.read()
                     if resp.headers.get("Content-Encoding", "").lower() == "gzip":
                         data = gzip.decompress(data)
                     return data.decode("utf-8", "replace")
-            except urllib.error.HTTPError as exc:
-                raw = exc.read()
-                if exc.headers.get("Content-Encoding", "").lower() == "gzip":
-                    try:
-                        raw = gzip.decompress(raw)
-                    except OSError:
-                        pass
-                text = raw.decode("utf-8", "replace")
-                if exc.code == 404 and "NOT_FOUND" in text:
-                    raise ApiNotFound(f"No matches: {url}") from exc
-                if exc.code in (429, 500, 502, 503, 504) and attempt < retries - 1:
-                    last_error = exc
-                    if exc.code == 429:
-                        retry_after = exc.headers.get("Retry-After")
-                        try:
-                            delay = max(1.0, float(retry_after))
-                        except (TypeError, ValueError):
-                            delay = 2.0 * (attempt + 1)
-                    else:
-                        delay = 1.5 ** attempt
-                    time.sleep(delay)
-                    continue
-                raise RegError(f"HTTP {exc.code} for {url}\n{text[:600]}") from exc
-            except urllib.error.URLError as exc:
+        except urllib.error.HTTPError as exc:
+            raw = exc.read()
+            if exc.headers.get("Content-Encoding", "").lower() == "gzip":
+                try:
+                    raw = gzip.decompress(raw)
+                except OSError:
+                    pass
+            text = raw.decode("utf-8", "replace")
+            if exc.code == 404 and "NOT_FOUND" in text:
+                raise ApiNotFound(f"No matches: {url}") from exc
+            if exc.code in (429, 500, 502, 503, 504) and attempt < retries - 1:
                 last_error = exc
-                if attempt < retries - 1:
-                    time.sleep(1.5 ** attempt)
-                    continue
-                raise RegError(f"Network error for {url}: {exc.reason}") from exc
+                if exc.code == 429:
+                    retry_after = exc.headers.get("Retry-After")
+                    try:
+                        delay = max(1.0, float(retry_after))
+                    except (TypeError, ValueError):
+                        delay = 2.0 * (attempt + 1)
+                else:
+                    delay = 1.5 ** attempt
+                time.sleep(delay)
+                continue
+            raise RegError(f"HTTP {exc.code} for {url}\n{text[:600]}") from exc
+        except urllib.error.URLError as exc:
+            last_error = exc
+            if attempt < retries - 1:
+                time.sleep(1.5 ** attempt)
+                continue
+            raise RegError(f"Network error for {url}: {exc.reason}") from exc
     raise RegError(f"Request failed for {url}: {last_error}")
 
 def _get_json(
@@ -991,15 +996,49 @@ def load_guidance() -> list[dict]:
     return data.get("entries", data if isinstance(data, list) else [])
 
 
+def _registry_verification(entries: list[dict]) -> dict[str, Any]:
+    """Describe how the registry was verified.
+
+    A registry where most entries share one `last_verified` date has a bulk
+    bump, not per-entry verification. Surfacing that keeps the stale flag from
+    claiming more than it can support (SKILL.md rule 6).
+    """
+    dates = [str(entry.get("last_verified")) for entry in entries if entry.get("last_verified")]
+    if not dates:
+        return {"mode": "unknown", "entries": len(entries)}
+    counts: dict[str, int] = {}
+    for value in dates:
+        counts[value] = counts.get(value, 0) + 1
+    dominant_date, count = max(counts.items(), key=lambda item: item[1])
+    share = count / len(entries)
+    evidenced = sum(1 for entry in entries if str(entry.get("verified_via") or "").strip())
+    evidence_coverage = evidenced / len(entries)
+    if share < 0.8 or len(entries) < 6:
+        mode = "per-entry"
+    elif evidence_coverage >= 0.9:
+        # Same-day verification, but every entry records what the page said.
+        mode = "bulk-evidenced"
+    else:
+        mode = "bulk"
+    return {
+        "mode": mode,
+        "dominant_date": dominant_date,
+        "share": round(share, 3),
+        "evidence_coverage": round(evidence_coverage, 3),
+        "entries": len(entries),
+    }
+
+
 def guidance_search(
     query: str | None = None,
     topic: str | None = None,
     status: str | None = None,
     max_age_days: int = 120,
 ) -> dict:
+    registry = load_guidance()
     entries = []
     today = dt.date.today()
-    for entry in load_guidance():
+    for entry in registry:
         haystack = " ".join(
             str(entry.get(k, ""))
             for k in ("id", "title", "notes", "status", "docket", "topics")
@@ -1019,13 +1058,27 @@ def guidance_search(
             item["age_days"] = None
             item["stale"] = True
         entries.append(item)
+    verification = _registry_verification(registry)
+    note = "Local index only. Re-verify status/date on the FDA page before relying on an entry."
+    if verification["mode"] == "bulk":
+        note += (
+            f" Verification is bulk ({verification['share']:.0%} of entries share "
+            f"last_verified={verification['dominant_date']} without per-entry evidence); "
+            "the stale flag is not verification."
+        )
+    elif verification["mode"] == "bulk-evidenced":
+        note += (
+            f" All entries were checked on {verification['dominant_date']}; "
+            "verified_via records the page evidence for each."
+        )
     out = {
         "_meta": {
             "source": "Curated guidance registry (local)",
             "url": str(SKILL_DIR / "references" / "guidance-registry.json"),
             "retrieved_at": utcnow(),
-            "note": "Local index only. Re-verify status/date on the FDA page before relying on an entry.",
+            "note": note,
             "stale_threshold_days": max_age_days,
+            "verification": verification,
         },
         "count": len(entries),
         "results": entries,
@@ -1641,7 +1694,50 @@ def kb_init(force: bool = False) -> dict:
             [[k or "(none)", v] for k, v in sorted(stats["by_source_type"].items())],
         )
     )
+    conn.close()
     return out
+
+
+FTS_STOPWORDS = frozenset(
+    """
+    a an and are as at be been but by can could did do does for from had has have
+    how if in into is it its may might no not of on or should than that the their
+    them then there these they this those to was were what when which who why will
+    with would versus vs about
+    """.split()
+)
+
+
+def _search_terms(query: str) -> list[str]:
+    """Tokenize a search query for FTS5.
+
+    Common English words are dropped: ORing every token made `QVO OR` match
+    every document containing "or". If the query is *only* stopwords, keep the
+    raw tokens so an intentional search still works.
+    """
+    raw = re.findall(r"[A-Za-z0-9][A-Za-z0-9_.-]*", query)
+    terms: list[str] = []
+    seen: set[str] = set()
+    for token in raw:
+        key = token.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        if len(token) < 2 or key in FTS_STOPWORDS:
+            continue
+        terms.append(token)
+    return (terms or raw)[:12]
+
+
+def _like_pattern(query: str) -> str:
+    """Escape SQL LIKE wildcards so `%` and `_` are literal characters."""
+    escaped = (
+        query.lower()
+        .replace("\\", "\\\\")
+        .replace("%", "\\%")
+        .replace("_", "\\_")
+    )
+    return f"%{escaped}%"
 
 
 def _kb_search_fts(
@@ -1653,7 +1749,7 @@ def _kb_search_fts(
 ) -> list[dict]:
     if not _kb_fts_enabled(conn):
         return []
-    terms = re.findall(r"[A-Za-z0-9][A-Za-z0-9_.-]*", query)
+    terms = _search_terms(query)
     if not terms:
         return []
     match = " OR ".join(f'"{term}"' for term in terms[:12])
@@ -1688,7 +1784,7 @@ def _kb_search_like(
     source_type: str | None,
     status: str | None,
 ) -> list[dict]:
-    like = f"%{query.lower()}%"
+    like = _like_pattern(query)
     sql = """
         SELECT d.id, d.source, d.source_type, d.title, d.citation, d.url,
                d.retrieved_at, d.as_of, d.status, d.tags,
@@ -1696,10 +1792,10 @@ def _kb_search_like(
                0.0 AS rank
         FROM documents d
         WHERE (
-            lower(d.title) LIKE ?
-            OR lower(coalesce(d.citation, '')) LIKE ?
-            OR lower(coalesce(d.id, '')) LIKE ?
-            OR lower(d.text) LIKE ?
+            lower(d.title) LIKE ? ESCAPE '\\'
+            OR lower(coalesce(d.citation, '')) LIKE ? ESCAPE '\\'
+            OR lower(coalesce(d.id, '')) LIKE ? ESCAPE '\\'
+            OR lower(d.text) LIKE ? ESCAPE '\\'
         )
     """
     params: list[Any] = [like, like, like, like]
@@ -1759,35 +1855,60 @@ def kb_search(
             ["ID", "Type", "Status", "Title", "Retrieved"],
             [[r["id"], r["source_type"], r["status"], r["title"], r["retrieved_at"]] for r in rows],
         )
+    conn.close()
     return out
 
 
-def kb_get(key: str) -> dict:
+def kb_get(key: str, source_type: str | None = None) -> dict:
     key = (key or "").strip()
     conn = _kb_connect()
-    row = None
-    for clause in ("id = ?", "url = ?", "citation = ?"):
-        row = conn.execute(f"SELECT * FROM documents WHERE {clause} LIMIT 1", (key,)).fetchone()
-        if row:
-            break
-    if row is None:
-        row = conn.execute(
-            "SELECT * FROM documents WHERE title LIKE ? ORDER BY retrieved_at DESC LIMIT 1",
-            (f"%{key}%",),
-        ).fetchone()
-    if row is None:
-        raise RegError(f"No local knowledge document matched: {key}")
+    rows: list[sqlite3.Row] = []
+    if key:
+        for clause in ("id = ?", "url = ?", "citation = ?"):
+            sql = f"SELECT * FROM documents WHERE {clause}"
+            params: list[Any] = [key]
+            if source_type:
+                sql += " AND source_type = ?"
+                params.append(source_type)
+            # Stable order: a URL shared by a CFR seed and a guidance stub must
+            # not resolve differently between runs.
+            sql += " ORDER BY id"
+            rows = conn.execute(sql, params).fetchall()
+            if rows:
+                break
+    if not rows and key:
+        sql = "SELECT * FROM documents WHERE title LIKE ? ESCAPE '\\'"
+        params = [_like_pattern(key)]
+        if source_type:
+            sql += " AND source_type = ?"
+            params.append(source_type)
+        sql += " ORDER BY retrieved_at DESC, id LIMIT 20"
+        rows = conn.execute(sql, params).fetchall()
+    if not rows:
+        hint = f" (source_type={source_type})" if source_type else ""
+        conn.close()
+        raise RegError(f"No local knowledge document matched: {key}{hint}")
+    row = rows[0]
     doc = dict(row)
     doc["metadata"] = json.loads(doc["metadata"]) if doc.get("metadata") else {}
-    return {
-        "_meta": {
-            "source": "local knowledge base",
-            "db": str(kb_path()),
-            "retrieved_at": utcnow(),
-            "note": "Offline read. Verify the official URL before relying on it.",
-        },
-        "document": doc,
+    meta = {
+        "source": "local knowledge base",
+        "db": str(kb_path()),
+        "retrieved_at": utcnow(),
+        "note": "Offline read. Verify the official URL before relying on it.",
     }
+    if len(rows) > 1:
+        meta["ambiguous"] = True
+        meta["alternatives"] = [
+            {"id": other["id"], "source_type": other["source_type"], "title": other["title"]}
+            for other in rows[1:10]
+        ]
+        meta["note"] = (
+            "Multiple documents matched this key; showing the first by id. "
+            "Use the exact id or --source-type to disambiguate."
+        )
+    conn.close()
+    return {"_meta": meta, "document": doc}
 
 
 def kb_stats() -> dict:
@@ -1816,6 +1937,7 @@ def kb_stats() -> dict:
             [[k or "(none)", v] for k, v in sorted(stats["by_source_type"].items())],
         )
     )
+    conn.close()
     return out
 
 
@@ -1844,6 +1966,7 @@ def kb_stale(days: int | None = None) -> dict:
             ["ID", "Type", "Age (days)", "TTL", "Title"],
             [[r["id"], r["source_type"], r["age_days"], r["ttl_days"], r["title"]] for r in rows],
         )
+    conn.close()
     return out
 
 
@@ -1883,6 +2006,7 @@ def kb_note_add(
         },
     )
     conn.commit()
+    conn.close()
     return {
         "_meta": {"source": "local knowledge base", "db": str(kb_path()), "retrieved_at": utcnow()},
         "id": note_id,
@@ -1912,15 +2036,30 @@ def kb_note_list(limit: int = 20) -> dict:
             ["ID", "Title", "Tags", "Retrieved"],
             [[r["id"], r["title"], r["tags"], r["retrieved_at"]] for r in rows],
         )
+    conn.close()
     return out
 
 
 def _kb_export_text(conn: sqlite3.Connection, fmt: str) -> str:
-    rows = conn.execute("SELECT * FROM documents ORDER BY source_type, retrieved_at DESC").fetchall()
+    rows = conn.execute("SELECT * FROM documents ORDER BY source_type, retrieved_at DESC, id").fetchall()
+
+    def as_dict(row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            **dict(row),
+            "metadata": json.loads(row["metadata"]) if row["metadata"] else {},
+        }
+
     if fmt == "jsonl":
-        return "\n".join(
-            json.dumps({**dict(row), "metadata": json.loads(row["metadata"]) if row["metadata"] else {}}, ensure_ascii=False)
-            for row in rows
+        return "\n".join(json.dumps(as_dict(row), ensure_ascii=False) for row in rows) + "\n"
+    if fmt == "json":
+        return json.dumps(
+            {
+                "generated_at": utcnow(),
+                "count": len(rows),
+                "documents": [as_dict(row) for row in rows],
+            },
+            ensure_ascii=False,
+            indent=2,
         ) + "\n"
     lines = [
         "# US Sleep Regulatory — local knowledge export",
@@ -1952,13 +2091,15 @@ def _kb_export_text(conn: sqlite3.Connection, fmt: str) -> str:
 
 
 def kb_export(fmt: str = "md", out: str | None = None) -> str:
-    fmt = "jsonl" if fmt == "jsonl" else "md"
+    if fmt not in {"md", "json", "jsonl"}:
+        raise RegError(f"Unsupported export format: {fmt}. Use md, json, or jsonl.")
     conn = _kb_connect()
     text = _kb_export_text(conn, fmt)
     if out:
         path = Path(out)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text, encoding="utf-8")
+    conn.close()
     return text
 
 
@@ -2049,6 +2190,7 @@ def kb_ingest(
             ["Path", "Status", "Title/Detail"],
             [[r["path"], r["status"], r.get("title") or r.get("detail", "")] for r in results],
         )
+    conn.close()
     return out
 
 
@@ -2081,8 +2223,12 @@ FR_SEED_TAGS = {
 }
 
 
-def _kb_fetch_cfr(title: str, ref: str, is_part: bool) -> dict:
-    doc = ecfr_get(title, part=ref, use_cache=False) if is_part else ecfr_get(title, section=ref, use_cache=False)
+def _kb_fetch_cfr(title: str, ref: str, is_part: bool, use_cache: bool = True, ttl: int = DEFAULT_TTL) -> dict:
+    doc = (
+        ecfr_get(title, part=ref, use_cache=use_cache, ttl=ttl)
+        if is_part
+        else ecfr_get(title, section=ref, use_cache=use_cache, ttl=ttl)
+    )
     citation = f"{title} CFR Part {ref}" if is_part else f"{title} CFR {ref}"
     return {
         "id": f"cfr-{title}-{ref}",
@@ -2101,8 +2247,8 @@ def _kb_fetch_cfr(title: str, ref: str, is_part: bool) -> dict:
     }
 
 
-def _kb_fetch_classification(code: str) -> list[dict]:
-    data = fda_classification(product_code=code, use_cache=False)
+def _kb_fetch_classification(code: str, use_cache: bool = True, ttl: int = DEFAULT_TTL) -> list[dict]:
+    data = fda_classification(product_code=code, use_cache=use_cache, ttl=ttl)
     return [
         {
             "id": f"classification-{code}",
@@ -2123,8 +2269,8 @@ def _kb_fetch_classification(code: str) -> list[dict]:
     ]
 
 
-def _kb_fetch_510k(code: str) -> list[dict]:
-    data = fda_510k_search(product_code=code, limit=100, use_cache=False)
+def _kb_fetch_510k(code: str, use_cache: bool = True, ttl: int = DEFAULT_TTL) -> list[dict]:
+    data = fda_510k_search(product_code=code, limit=100, use_cache=use_cache, ttl=ttl)
     docs = []
     for record in data.get("results", []):
         text = "\n".join(
@@ -2157,8 +2303,8 @@ def _kb_fetch_510k(code: str) -> list[dict]:
     return docs
 
 
-def _kb_fetch_fr(document_number: str, tags: str) -> dict:
-    data = fr_get(document_number, use_cache=False)["document"]
+def _kb_fetch_fr(document_number: str, tags: str, use_cache: bool = True, ttl: int = DEFAULT_TTL) -> dict:
+    data = fr_get(document_number, use_cache=use_cache, ttl=ttl)["document"]
     doc_type = data.get("type") or ""
     status = "binding" if doc_type == "Rule" else "proposed" if "Proposed" in doc_type else "notice"
     text = "\n\n".join(x for x in [data.get("title"), data.get("abstract")] if x)
@@ -2182,8 +2328,8 @@ def _kb_fetch_fr(document_number: str, tags: str) -> dict:
     }
 
 
-def _kb_fetch_fr_search(term: str) -> list[dict]:
-    data = fr_search(term=term, agency="fda", since="2024-01-01", limit=20, use_cache=False)
+def _kb_fetch_fr_search(term: str, use_cache: bool = True, ttl: int = DEFAULT_TTL) -> list[dict]:
+    data = fr_search(term=term, agency="fda", since="2024-01-01", limit=20, use_cache=use_cache, ttl=ttl)
     docs = []
     for record in data.get("results", []):
         doc_type = record.get("type") or ""
@@ -2208,12 +2354,13 @@ def _kb_fetch_fr_search(term: str) -> list[dict]:
     return docs
 
 
-def _kb_fetch_trials() -> list[dict]:
+def _kb_fetch_trials(use_cache: bool = True, ttl: int = DEFAULT_TTL) -> list[dict]:
     trials = trials_search(
         condition="insomnia",
         intervention="cognitive behavioral therapy",
         limit=20,
-        use_cache=False,
+        use_cache=use_cache,
+        ttl=ttl,
     )
     return [
         {
@@ -2235,8 +2382,8 @@ def _kb_fetch_trials() -> list[dict]:
     ]
 
 
-def _kb_fetch_pubmed() -> list[dict]:
-    pubmed = pubmed_search("digital CBT-I insomnia randomized", limit=20, use_cache=False)
+def _kb_fetch_pubmed(use_cache: bool = True, ttl: int = DEFAULT_TTL) -> list[dict]:
+    pubmed = pubmed_search("digital CBT-I insomnia randomized", limit=20, use_cache=use_cache, ttl=ttl)
     return [
         {
             "id": f"pubmed-{record.get('pmid')}",
@@ -2257,8 +2404,8 @@ def _kb_fetch_pubmed() -> list[dict]:
     ]
 
 
-def _kb_fetch_summary(k_number: str) -> dict | None:
-    data = fda_510k_get(k_number, fetch_summary=True, use_cache=False)
+def _kb_fetch_summary(k_number: str, use_cache: bool = True, ttl: int = DEFAULT_TTL) -> dict | None:
+    data = fda_510k_get(k_number, fetch_summary=True, use_cache=use_cache, ttl=ttl)
     record = data["results"]
     text = record.get("summary_text")
     if not text:
@@ -2280,25 +2427,49 @@ def _kb_fetch_summary(k_number: str) -> dict | None:
     }
 
 
-def kb_refresh(extended: bool = False, summaries: bool = False, jobs: int = DEFAULT_JOBS) -> dict:
+def kb_refresh(
+    extended: bool = False,
+    summaries: bool = False,
+    jobs: int = DEFAULT_JOBS,
+    use_cache: bool = True,
+    ttl: int = DEFAULT_TTL,
+) -> dict:
+    """Refresh the core official sources into the local KB.
+
+    Cache reads are on by default so a second refresh inside the TTL is cheap
+    and idempotent; pass ``use_cache=False`` (``--no-cache``) to force a live
+    fetch of every source.
+    """
     conn = _kb_connect()
     tasks: dict[str, Callable[[], Any]] = {}
 
     for title, ref, is_part in CFR_REFS:
-        tasks[f"cfr:{title}:{ref}"] = lambda t=title, r=ref, p=is_part: _kb_fetch_cfr(t, r, p)
+        tasks[f"cfr:{title}:{ref}"] = lambda t=title, r=ref, p=is_part: _kb_fetch_cfr(
+            t, r, p, use_cache=use_cache, ttl=ttl
+        )
     for code in ("QVO", "QMZ", "LEL"):
-        tasks[f"classification:{code}"] = lambda c=code: _kb_fetch_classification(c)
-        tasks[f"510k:{code}"] = lambda c=code: _kb_fetch_510k(c)
+        tasks[f"classification:{code}"] = lambda c=code: _kb_fetch_classification(
+            c, use_cache=use_cache, ttl=ttl
+        )
+        tasks[f"510k:{code}"] = lambda c=code: _kb_fetch_510k(c, use_cache=use_cache, ttl=ttl)
     for document_number, tags in FR_SEED_TAGS.items():
-        tasks[f"federal-register:{document_number}"] = lambda d=document_number, tg=tags: _kb_fetch_fr(d, tg)
+        tasks[f"federal-register:{document_number}"] = lambda d=document_number, tg=tags: _kb_fetch_fr(
+            d, tg, use_cache=use_cache, ttl=ttl
+        )
     if extended:
-        tasks["extended:fr-samd"] = lambda: _kb_fetch_fr_search('"software as a medical device"')
-        tasks["extended:fr-ai"] = lambda: _kb_fetch_fr_search('"artificial intelligence"')
-        tasks["extended:trials"] = _kb_fetch_trials
-        tasks["extended:pubmed"] = _kb_fetch_pubmed
+        tasks["extended:fr-samd"] = lambda: _kb_fetch_fr_search(
+            '"software as a medical device"', use_cache=use_cache, ttl=ttl
+        )
+        tasks["extended:fr-ai"] = lambda: _kb_fetch_fr_search(
+            '"artificial intelligence"', use_cache=use_cache, ttl=ttl
+        )
+        tasks["extended:trials"] = lambda: _kb_fetch_trials(use_cache=use_cache, ttl=ttl)
+        tasks["extended:pubmed"] = lambda: _kb_fetch_pubmed(use_cache=use_cache, ttl=ttl)
     if summaries:
         for k_number in ("K191716", "K233577", "DEN200033"):
-            tasks[f"summaries:{k_number}"] = lambda k=k_number: _kb_fetch_summary(k)
+            tasks[f"summaries:{k_number}"] = lambda k=k_number: _kb_fetch_summary(
+                k, use_cache=use_cache, ttl=ttl
+            )
 
     results, errors = _run_parallel(tasks, jobs=jobs)
 
@@ -2348,7 +2519,15 @@ def kb_refresh(extended: bool = False, summaries: bool = False, jobs: int = DEFA
             "db": str(kb_path()),
             "retrieved_at": utcnow(),
             "jobs": jobs,
-            "note": "Parallel refresh completed. Subsequent prompts can use offline kb search.",
+            "cache_reads": use_cache,
+            "cache_ttl_seconds": ttl,
+            "note": (
+                "Parallel refresh completed, reusing cached responses inside the TTL. "
+                "Use --no-cache to force live fetches. Subsequent prompts can use offline kb search."
+                if use_cache
+                else "Parallel refresh completed with live fetches (cache bypassed). "
+                "Subsequent prompts can use offline kb search."
+            ),
         },
         "sources": sources,
         "documents": stats["documents"],
@@ -2359,6 +2538,7 @@ def kb_refresh(extended: bool = False, summaries: bool = False, jobs: int = DEFA
         ["Source", "Status", "Count / Error"],
         [[k, v.get("status"), v.get("count") if v.get("status") == "ok" else v.get("error", "")] for k, v in sources.items()],
     )
+    conn.close()
     return out
 
 
@@ -2387,9 +2567,21 @@ def doctor() -> dict:
     run("ClinicalTrials.gov v2", lambda: trials_search(condition="insomnia", limit=1, use_cache=False)["results"][0]["nct_id"])
     run("PubMed E-utilities", lambda: pubmed_search("digital CBT-I insomnia", limit=1, use_cache=False)["results"][0]["pmid"])
     def _pdf_check() -> str:
-        target = CACHE_DIR / "doctor" / "K191716.pdf"
-        _download("https://www.accessdata.fda.gov/cdrh_docs/pdf19/K191716.pdf", target)
-        return f"PDF {target.stat().st_size} bytes"
+        # HEAD is enough to prove the PDF path is reachable; the old version
+        # re-downloaded 460 KB on every `doctor` run.
+        url = "https://www.accessdata.fda.gov/cdrh_docs/pdf19/K191716.pdf"
+        request = urllib.request.Request(
+            url,
+            method="HEAD",
+            headers={"User-Agent": UA, "Accept": "application/pdf", "Accept-Encoding": "identity"},
+        )
+        with urllib.request.urlopen(request, timeout=30) as response:
+            content_type = response.headers.get("Content-Type", "")
+            if response.status != 200:
+                raise RegError(f"HEAD {url} returned {response.status}")
+            if "pdf" not in content_type.lower():
+                raise RegError(f"Expected a PDF from {url}, got {content_type!r}")
+            return f"HEAD 200, {content_type}, {response.headers.get('Content-Length', '?')} bytes"
 
     run("accessdata 510(k) PDF", _pdf_check)
     ok = sum(1 for c in checks if c["status"] == "ok")
@@ -2423,7 +2615,10 @@ def _common_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(add_help=False)
     p.add_argument("--no-cache", action="store_true", help="Bypass cache reads (still writes cache).")
     p.add_argument("--cache-ttl", type=int, default=DEFAULT_TTL, help=f"Cache TTL seconds (default {DEFAULT_TTL}).")
-    p.add_argument("--format", choices=["json", "md"], default="json")
+    # None means "use the command's default": JSON for API commands, Markdown
+    # for `kb export`. Resolving it per command keeps `--format json` honest
+    # instead of silently falling back to another default.
+    p.add_argument("--format", choices=["json", "md"], default=None)
     p.add_argument("--out", help="Write full JSON output to this path.")
     p.add_argument("--jobs", type=int, default=DEFAULT_JOBS, help=f"Parallel HTTP workers (default {DEFAULT_JOBS}, max 12).")
     return p
@@ -2525,6 +2720,7 @@ def main(argv: list[str] | None = None) -> int:
 
     kp = kb_sub.add_parser("get", parents=[common], help="Read one local KB document by id, URL, or citation.")
     kp.add_argument("key")
+    kp.add_argument("--source-type", help="Disambiguate when several sources share a URL (e.g. cfr, guidance).")
 
     kb_sub.add_parser("stats", parents=[common], help="Show KB size, counts, and freshness.")
 
@@ -2556,6 +2752,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     uc = not args.no_cache
     ttl = args.cache_ttl
+    fmt = args.format or "json"
 
     if args.command == "510k-search":
         data = fda_510k_search(
@@ -2616,11 +2813,17 @@ def main(argv: list[str] | None = None) -> int:
         if args.kb_command == "init":
             data = kb_init(force=args.force)
         elif args.kb_command == "refresh":
-            data = kb_refresh(extended=args.extended, summaries=args.summaries, jobs=args.jobs)
+            data = kb_refresh(
+                extended=args.extended,
+                summaries=args.summaries,
+                jobs=args.jobs,
+                use_cache=uc,
+                ttl=ttl,
+            )
         elif args.kb_command == "search":
             data = kb_search(args.query, limit=args.limit, source_type=args.source_type, status=args.status)
         elif args.kb_command == "get":
-            data = kb_get(args.key)
+            data = kb_get(args.key, source_type=args.source_type)
         elif args.kb_command == "stats":
             data = kb_stats()
         elif args.kb_command == "stale":
@@ -2631,7 +2834,8 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 data = kb_note_list(limit=args.limit)
         elif args.kb_command == "export":
-            text = kb_export(fmt="jsonl" if args.jsonl else "md", out=args.out)
+            export_fmt = "jsonl" if args.jsonl else (args.format or "md")
+            text = kb_export(fmt=export_fmt, out=args.out)
             if args.out:
                 print(f"Wrote {args.out}")
             else:
@@ -2666,7 +2870,7 @@ def main(argv: list[str] | None = None) -> int:
         parser.error(f"unknown command {args.command}")
         return 2
 
-    _print_output(data, fmt=args.format, out=args.out)
+    _print_output(data, fmt=fmt, out=args.out)
     if args.command == "doctor":
         checks = data.get("checks", [])
         return 0 if checks and all(c.get("status") == "ok" for c in checks) else 1

@@ -103,7 +103,12 @@ API는 다음 경우에만 호출합니다.
 python3 "$REG" kb refresh --jobs 6              # CFR, classification, 510(k), FR
 python3 "$REG" kb refresh --extended --jobs 6   # + FR search, trials, PubMed
 python3 "$REG" kb refresh --summaries --jobs 6  # + 510(k) summary PDF
+python3 "$REG" kb refresh --no-cache            # HTTP 캐시 무시, 라이브 조회
 ```
+
+`kb refresh`는 `--cache-ttl`(기본 24시간, `US_REG_CACHE_TTL`) 안의 HTTP 캐시를
+재사용합니다. 연속 실행해도 저렴하고 결과가 같으며, 모든 소스를 다시 받아야
+할 때만 `--no-cache`(또는 `--cache-ttl 0`)를 쓰세요.
 
 세션 후 결론을 로컬 KB에 축적:
 
@@ -111,7 +116,19 @@ python3 "$REG" kb refresh --summaries --jobs 6  # + 510(k) summary PDF
 python3 "$REG" kb note add "QVO is prescription-only; DTC model is a fit gap." \
   --title "QVO vs DTC" --tags "device,qvo,strategy" \
   --source "https://www.ecfr.gov/current/title-21/section-882.5801"
-python3 "$REG" kb export --format md --out snapshots/knowledge.md
+python3 "$REG" kb export --format md   --out snapshots/knowledge.md
+python3 "$REG" kb export --format json --out snapshots/knowledge.json
+python3 "$REG" kb export --jsonl       --out snapshots/knowledge.jsonl
+```
+
+CFR 섹션과 guidance registry 항목처럼 두 문서가 같은 URL을 공유하면
+`kb get`은 id 순서로 첫 문서를 고르고 `_meta.ambiguous`와
+`_meta.alternatives`를 함께 반환합니다. `--source-type`이나 정확한 id로
+명시하세요.
+
+```bash
+python3 "$REG" kb get cfr-21-882.5801 --format md
+python3 "$REG" kb get https://www.ecfr.gov/current/title-21/section-882.5801 --source-type guidance
 ```
 
 | 콘텐츠 | TTL | 갱신 |
@@ -236,7 +253,8 @@ Test-Path "$env:USERPROFILE\.config\opencode\commands\us-sleep-regulatory.md"
 
 `fda_510k_search`, `fda_510k_get`, `fda_classification`, `fda_predicates`,
 `ecfr_get`, `fr_search`, `trials_search`, `pubmed_search`, `guidance_search`,
-`regulatory_snapshot`
+`regulatory_snapshot`, `kb_search`, `kb_get`, `kb_stats`, `kb_note_add`,
+`kb_refresh`, `kb_init`
 
 ### CLI
 
@@ -465,14 +483,32 @@ powershell -ExecutionPolicy Bypass -File "$env:TEMP\us-sleep-install.ps1" `
 
 ```bash
 ./install.sh \
-  --from https://github.com/allbegray/us-sleep-regulatory/releases/download/v1.5.0/us-sleep-regulatory-v1.5.0.tar.gz \
+  --from https://github.com/allbegray/us-sleep-regulatory/releases/download/v1.6.0/us-sleep-regulatory-v1.6.0.tar.gz \
   --target all --force
 ```
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\install.ps1 `
-  -From https://github.com/allbegray/us-sleep-regulatory/releases/download/v1.5.0/us-sleep-regulatory-v1.5.0.zip `
+  -From https://github.com/allbegray/us-sleep-regulatory/releases/download/v1.6.0/us-sleep-regulatory-v1.6.0.zip `
   -Target all -Force
+```
+
+### 다운로드 검증
+
+릴리스 아티팩트에는 `SHA256SUMS`가 함께 배포됩니다. `install.sh --sha256`과
+`install.ps1 -Sha256`은 압축을 풀기 전에 해시를 검증합니다.
+
+```bash
+SHA="$(curl -fsSL https://github.com/allbegray/us-sleep-regulatory/releases/download/v1.6.0/SHA256SUMS | awk '/tar.gz/{print $1}')"
+./install.sh \
+  --from https://github.com/allbegray/us-sleep-regulatory/releases/download/v1.6.0/us-sleep-regulatory-v1.6.0.tar.gz \
+  --target all --sha256 "$SHA"
+```
+
+```powershell
+$SHA = (Get-Content .\SHA256SUMS | Select-String '\.zip').Line.Split()[0]
+powershell -ExecutionPolicy Bypass -File .\install.ps1 `
+  -From .\us-sleep-regulatory-v1.6.0.zip -Target all -Sha256 $SHA
 ```
 
 ### 업데이트할 때 보존되는 것
@@ -579,12 +615,16 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1 -Target all -Uninstall
 
 ### 릴리스 절차
 
-1. `VERSION`과 `install.sh`/`install.ps1`의 기본 버전을 같은 값으로 올립니다.
+1. `VERSION`, `install.sh`의 `DEFAULT_VERSION`, `install.ps1`의
+   `$DefaultVersion`, `scripts/reg.py`의 `VERSION`을 같은 값으로 올립니다.
 2. `CHANGELOG.md`에 변경 내용을 추가합니다.
-3. `bash tools/smoke_test.sh`로 7개 소스, MCP, 설치 3종, 버전 일치를 확인합니다.
-4. `bash tools/package.sh`로 tarball, zip, checksum, catalog를 만듭니다.
-5. commit 후 `vX.Y.Z` 태그를 push합니다.
-6. GitHub Actions가 Linux/Windows 테스트 후 Release와 Pages catalog를 배포합니다.
+3. `python3 -m unittest discover -s tests`와 `bash tools/smoke_test.sh --offline`을
+   실행합니다.
+4. `bash tools/smoke_test.sh`(네트워크)와 `bash tools/package.sh`로 tarball, zip,
+   checksum, catalog를 만듭니다.
+5. `python3 tools/validate_registry.py --strict`로 registry 항목을 개별 검증합니다.
+6. commit 후 `vX.Y.Z` 태그를 push합니다.
+7. GitHub Actions가 Linux/Windows 테스트 후 Release와 Pages catalog를 배포합니다.
 
 ### 사용자 업데이트
 
@@ -596,18 +636,24 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1 -Target all -Uninstall
 ## 검증
 
 ```bash
-bash tools/smoke_test.sh
+python3 -m unittest discover -s tests -v   # 오프라인, 네트워크 불필요
+bash tools/smoke_test.sh --offline         # 문법, 버전, 레지스트리, KB, MCP, 설치
+bash tools/smoke_test.sh                   # + 7개 공식 소스 연결 확인
 ```
+
+`--offline`은 PR/CI용 모드입니다. `doctor`와 라이브 refresh를 건너뛰므로
+FDA 엔드포인트 장애가 머지를 막지 않습니다. 릴리스 워크플로는 네트워크
+smoke 테스트와 `windows-latest`의 `install.ps1`까지 실행합니다.
 
 검사 항목:
 
 - Python 문법
-- openFDA, eCFR, Federal Register, ClinicalTrials.gov, PubMed, 510(k) PDF
-- guidance registry
-- MCP `initialize` + `tools/list` (10 tools)
+- guidance registry 구조·상태 어휘·bulk verification 경고
+- openFDA, eCFR, Federal Register, ClinicalTrials.gov, PubMed, 510(k) PDF (네트워크 모드)
+- MCP `initialize` + `tools/list` (16 tools)
 - Codex/Claude/OpenCode 설치·삭제 (macOS/Linux)
 - Windows `install.ps1` 설치·삭제 (GitHub Actions `windows-latest`)
-- `VERSION` / 기본 버전 일치
+- `VERSION` / 기본 버전 일치 (VERSION, install.sh, install.ps1, reg.py)
 
 ## 라이선스
 

@@ -173,8 +173,14 @@ TOOLS: list[dict[str, Any]] = [
     },
     {
         "name": "kb_get",
-        "description": "Read one local knowledge-base document by id, URL, or citation. Offline.",
-        "inputSchema": _schema({"key": {"type": "string"}}, ["key"]),
+        "description": "Read one local knowledge-base document by id, URL, or citation. Offline. Set source_type (e.g. cfr, guidance) when several sources share a URL.",
+        "inputSchema": _schema(
+            {
+                "key": {"type": "string"},
+                "source_type": {"type": "string", "description": "Disambiguate by source type, e.g. cfr or guidance."},
+            },
+            ["key"],
+        ),
     },
     {
         "name": "kb_stats",
@@ -196,12 +202,13 @@ TOOLS: list[dict[str, Any]] = [
     },
     {
         "name": "kb_refresh",
-        "description": "Refresh the local KB from official sources. This is the only KB tool that uses the network. Fetches run in parallel with per-host rate limits; set extended=true for Federal Register/ClinicalTrials/PubMed.",
+        "description": "Refresh the local KB from official sources. This is the only KB tool that uses the network. Fetches run in parallel with per-host rate limits; set extended=true for Federal Register/ClinicalTrials/PubMed. Cached responses inside the TTL are reused by default; set use_cache=false to force live fetches.",
         "inputSchema": _schema(
             {
                 "extended": {"type": "boolean", "default": False},
                 "summaries": {"type": "boolean", "default": False},
                 "jobs": {"type": "integer", "minimum": 1, "maximum": 12, "default": 6},
+                "use_cache": {"type": "boolean", "default": True, "description": "Reuse HTTP cache entries inside the TTL. Set false for a live refresh."},
             }
         ),
     },
@@ -260,7 +267,7 @@ def _dispatch(name: str, args: dict[str, Any]) -> dict:
     if name == "kb_search":
         return reg.kb_search(**pick("query", "limit", "source_type", "status"))
     if name == "kb_get":
-        return reg.kb_get(**pick("key"))
+        return reg.kb_get(**pick("key", "source_type"))
     if name == "kb_stats":
         return reg.kb_stats()
     if name == "kb_note_add":
@@ -276,6 +283,7 @@ def _dispatch(name: str, args: dict[str, Any]) -> dict:
             extended=bool(args.get("extended")),
             summaries=bool(args.get("summaries")),
             jobs=int(args.get("jobs", reg.DEFAULT_JOBS)),
+            use_cache=bool(args.get("use_cache", True)),
         )
     if name == "kb_init":
         return reg.kb_init(force=bool(args.get("force")))

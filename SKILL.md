@@ -106,7 +106,12 @@ Refresh the local copy:
 python3 "$REG" kb refresh --jobs 6              # CFR, classifications, 510(k), FR
 python3 "$REG" kb refresh --extended --jobs 6   # + FR search, trials, PubMed
 python3 "$REG" kb refresh --summaries --jobs 6  # + 510(k) summary PDFs (needs extractor)
+python3 "$REG" kb refresh --no-cache            # bypass the HTTP cache, fetch live
 ```
+
+Refresh reuses HTTP cache entries inside `--cache-ttl` (default 24h,
+`US_REG_CACHE_TTL`), so a second run is cheap and idempotent. `--no-cache` (or
+`--cache-ttl 0`) forces live fetches.
 
 | Content | TTL | Refresh |
 |---|---|---|
@@ -138,7 +143,18 @@ After the research session, save the durable conclusion and citations:
 python3 "$REG" kb note add "QVO is prescription-only; DTC model is a fit gap." \
   --title "QVO vs DTC" --tags "device,qvo,strategy" \
   --source "https://www.ecfr.gov/current/title-21/section-882.5801"
-python3 "$REG" kb export --format md --out snapshots/knowledge.md
+python3 "$REG" kb export --format md   --out snapshots/knowledge.md
+python3 "$REG" kb export --format json --out snapshots/knowledge.json
+python3 "$REG" kb export --jsonl       --out snapshots/knowledge.jsonl
+```
+
+When two documents share a URL (a CFR section and its guidance-registry stub
+do), `kb get` returns the first by id and reports `_meta.ambiguous` with
+`_meta.alternatives`. Use the exact id or `--source-type` to disambiguate.
+
+```bash
+python3 "$REG" kb get cfr-21-882.5801 --format md
+python3 "$REG" kb get https://www.ecfr.gov/current/title-21/section-882.5801 --source-type guidance
 ```
 
 **Completion:** each conclusion has a source URL + `retrieved_at`; at least one
