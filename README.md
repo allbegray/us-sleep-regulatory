@@ -13,6 +13,42 @@ Install once, then trigger it with `/us-sleep-regulatory` or
 > Research aid, not legal advice. Verify the current official text before a
 > filing, launch, or breach decision.
 
+## Why use this skill
+
+A sleep-therapy app's regulatory question is three questions tangled together:
+
+1. Is the app a medical device? (wellness vs 510(k) vs De Novo)
+2. Which product code and predicate apply, and what evidence is required? (QVO/QMZ/LEL)
+3. What do HIPAA, the FTC, and state law require for the clinical service and its data?
+
+This skill answers all three from one source base.
+
+| Benefit | What changes in practice |
+|---|---|
+| **Official sources** | Queries openFDA, eCFR, Federal Register, ClinicalTrials.gov, and PubMed directly. No blog posts, memory, or invented K numbers. |
+| **Citation and audit trail** | Every answer carries a KB ID, URL, `retrieved_at`, and a binding/guidance/draft status. The memo can go straight into a report. |
+| **Local-first speed** | 50+ seed documents in SQLite + FTS5. No API call per prompt; `kb refresh` is the only network path. |
+| **Sleep-specific** | QVO/QMZ/LEL, Somryst/Sleepio/NightWare, CBT-I endpoints, QMSR, AI/PCCP, and HIPAA in one flow. |
+| **Two tracks, not one** | Separates FDA 510(k) from HIPAA so "we got 510(k), therefore we are HIPAA compliant" does not survive review. |
+| **DTC/prescription trap** | Flags the QVO prescription-only and adjunct requirements before you build a self-serve funnel. |
+| **Repeatable output** | `snapshot`, `kb note`, and `memo-template` accumulate dated, citable research. |
+| **Three clients, three OSes** | Codex, Claude Code, OpenCode; macOS, Linux, and Windows installers. |
+
+### Who it is for
+
+- **Founders and product managers** — DTC vs prescription, 510(k) vs wellness vs De Novo, 12-month roadmap.
+- **Regulatory and quality** — predicates, QVO special controls, QMSR, software/cyber/HF evidence.
+- **Engineering and security** — SRS/SDS/V&V, 524B, SBOM, human factors, AI/PCCP.
+- **Clinical and medical affairs** — CBT-I endpoints, safety exclusions, trial design.
+- **Investors and diligence teams** — pathway, evidence gaps, and the top regulatory risks.
+
+### What it does not do
+
+- It is not legal advice and does not file a 510(k)/De Novo for you.
+- It does not build your QMS, run your trial, or write your submission.
+- It does not survey every state medical-privacy law.
+- For fast-moving guidance or new clearances, run `kb refresh` or a live command.
+
 ## Use it
 
 ### Trigger matrix
@@ -278,8 +314,9 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1 -Target all
 
 #### Windows prerequisites
 
-- **Python 3.9+** from [python.org](https://www.python.org/downloads/windows/).
-  Check **Add python.exe to PATH**.
+- **Python 3.9+** is installed automatically (per-user, from python.org,
+  signature verified) when missing. Use `-SkipPythonInstall` to opt out, or
+  `-ForcePythonInstall` to repair. Manual install also works.
 - Verify:
 
   ```powershell
@@ -396,13 +433,13 @@ Or use a release artifact:
 
 ```bash
 ./install.sh \
-  --from https://github.com/allbegray/us-sleep-regulatory/releases/download/v1.3.0/us-sleep-regulatory-v1.3.0.tar.gz \
+  --from https://github.com/allbegray/us-sleep-regulatory/releases/download/v1.4.0/us-sleep-regulatory-v1.4.0.tar.gz \
   --target all --force
 ```
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\install.ps1 `
-  -From https://github.com/allbegray/us-sleep-regulatory/releases/download/v1.3.0/us-sleep-regulatory-v1.3.0.zip `
+  -From https://github.com/allbegray/us-sleep-regulatory/releases/download/v1.4.0/us-sleep-regulatory-v1.4.0.zip `
   -Target all -Force
 ```
 

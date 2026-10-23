@@ -14,6 +14,42 @@ Codex, Claude Code, OpenCode에서 같은 스킬을 사용할 수 있습니다. 
 > intended use, 유출 대응, 다주 출시 전에는 최신 공식 문서와 regulatory counsel을
 > 함께 확인하세요.
 
+## 왜 이 스킬을 써야 하나
+
+수면 치료 앱의 규제 질문은 세 가지가 동시에 얽혀 있습니다.
+
+1. 이 앱이 FDA 의료기기인가? (웰니스 vs 510(k) vs De Novo)
+2. 어떤 product code/predicate가 맞고, 어떤 evidence가 필요한가? (QVO/QMZ/LEL)
+3. 임상 서비스와 데이터가 HIPAA/FTC/주법상 어떤 의무를 지는가?
+
+이 스킬은 세 질문을 같은 출처 기준으로 한 번에 정리합니다.
+
+| 장점 | 실제로 무엇이 달라지나 |
+|---|---|
+| **공식 출처 기반** | openFDA, eCFR, Federal Register, ClinicalTrials.gov, PubMed를 직접 조회합니다. 블로그·기억·환각에 의존하지 않습니다. |
+| **인용·감사 추적** | 모든 답에 KB ID, URL, `retrieved_at`, binding/guidance/draft 상태가 붙습니다. 메모를 그대로 보고서에 붙일 수 있습니다. |
+| **로컬 우선 속도** | 50+개 seed 문서를 SQLite+FTS5에 색인합니다. 매 프롬프트마다 API를 호출하지 않고, `kb refresh`할 때만 최신화합니다. |
+| **수면 도메인 특화** | QVO/QMZ/LEL, Somryst/Sleepio/NightWare, CBT-I endpoint, QMSR, AI/PCCP, HIPAA를 한 흐름으로 봅니다. |
+| **두 트랙 동시 분석** | FDA 510(k)와 HIPAA를 분리합니다. “510(k)를 받았으니 HIPAA도 된다”는 흔한 오해를 막습니다. |
+| **DTC/처방 함정 경고** | QVO의 prescription-only·adjunct 요건과 DTC 모델 충돌을 퍼널을 만들기 전에 플래그합니다. |
+| **반복 가능한 산출물** | `snapshot`, `kb note`, `memo-template`으로 날짜별·인용 가능한 조사 결과를 축적합니다. |
+| **세 클라이언트, 세 OS** | Codex, Claude Code, OpenCode / macOS, Linux, Windows 설치를 지원합니다. |
+
+### 이런 사람에게 유용합니다
+
+- **창업자·기획자** — DTC vs 처방, 510(k) vs 웰니스 vs De Novo, 12개월 로드맵
+- **규제·품질 담당** — predicate, QVO special controls, QMSR, software/cyber/HF evidence
+- **개발·보안 담당** — SRS/SDS/V&V, 524B, SBOM, human factors, AI/PCCP
+- **임상·메디컬 어페어** — CBT-I endpoint, safety exclusion, trial design
+- **투자·실사 담당** — 규제 경로, evidence gap, 핵심 리스크
+
+### 이 스킬이 하지 않는 것
+
+- 법률 자문이 아니며, 510(k)/De Novo를 대신 제출하지 않습니다.
+- QMS 구축, 임상시험 수행, 제출서 작성을 대신하지 않습니다.
+- 50개 주의 모든 의료·개인정보 법률을 전수 조사하지 않습니다.
+- 최신성이 중요한 가이던스·새 clearance는 `kb refresh` 또는 live 명령으로 확인해야 합니다.
+
 ## 사용법
 
 ### 도구별 호출 방법
@@ -290,8 +326,9 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1 -Target all
 
 #### Windows 사전 준비
 
-- **Python 3.9+**: [python.org](https://www.python.org/downloads/windows/)에서
-  설치하고 **Add python.exe to PATH**를 체크합니다.
+- **Python 3.9+**: 없으면 `install.ps1`이 python.org에서 **per-user**로
+  자동 설치합니다(서명 검증 후 조용히 설치). `-SkipPythonInstall`로 끌 수
+  있습니다. 수동 설치도 가능합니다.
 - 확인:
 
   ```powershell
@@ -418,13 +455,13 @@ powershell -ExecutionPolicy Bypass -File "$env:TEMP\us-sleep-install.ps1" `
 
 ```bash
 ./install.sh \
-  --from https://github.com/allbegray/us-sleep-regulatory/releases/download/v1.3.0/us-sleep-regulatory-v1.3.0.tar.gz \
+  --from https://github.com/allbegray/us-sleep-regulatory/releases/download/v1.4.0/us-sleep-regulatory-v1.4.0.tar.gz \
   --target all --force
 ```
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\install.ps1 `
-  -From https://github.com/allbegray/us-sleep-regulatory/releases/download/v1.3.0/us-sleep-regulatory-v1.3.0.zip `
+  -From https://github.com/allbegray/us-sleep-regulatory/releases/download/v1.4.0/us-sleep-regulatory-v1.4.0.zip `
   -Target all -Force
 ```
 

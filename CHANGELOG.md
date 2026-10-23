@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.4.0 — 2026-10-23
+
+- Windows installer now auto-installs Python 3.12 per-user from python.org when
+  Python 3.9+ is missing. The installer verifies the Authenticode signature,
+  runs silently, and needs no admin rights.
+- Added `-SkipPythonInstall` (opt out) and `-ForcePythonInstall` (repair).
+- Windows CI now tests the Python auto-install path on `windows-latest`.
+- README now leads with "Why use this skill": benefits, audience, and non-goals,
+  in English and Korean.
+- Version references updated to 1.4.0.
+
 ## 1.3.0 — 2026-10-23
 
 - Added a local **SQLite + FTS5 knowledge base** so prompts do not call MCP/REST
