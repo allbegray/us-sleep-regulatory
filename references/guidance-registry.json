@@ -242,6 +242,78 @@
       "verified_via": "fda.gov page opened 2026-10-23; on-page 'Content current as of: 08/30/2018'"
     },
     {
+      "id": "multiple-function-devices",
+      "title": "Multiple Function Device Products: Policy and Considerations",
+      "status": "Final",
+      "issued": "2020-07",
+      "docket": "FDA-2018-D-1339",
+      "url": "https://www.fda.gov/regulatory-information/search-fda-guidance-documents/multiple-function-device-products-policy-and-considerations",
+      "topics": [
+        "device",
+        "software",
+        "wellness",
+        "cds",
+        "regulatory"
+      ],
+      "notes": "When one product mixes device and non-device functions, FDA assesses the 'other functions' for their impact on the device function's safety and effectiveness. Use it when a sleep app combines wellness tracking with a treatment claim.",
+      "last_verified": "2026-10-23",
+      "verified_via": "fda.gov page opened 2026-10-23; on-page 'Content current as of: 07/28/2020'"
+    },
+    {
+      "id": "interoperable-devices",
+      "title": "Design Considerations and Pre-market Submission Recommendations for Interoperable Medical Devices",
+      "status": "Final",
+      "issued": "2017-09",
+      "docket": "FDA-2015-D-4852",
+      "url": "https://www.fda.gov/regulatory-information/search-fda-guidance-documents/design-considerations-and-pre-market-submission-recommendations-interoperable-medical-devices",
+      "topics": [
+        "device",
+        "software",
+        "interoperability",
+        "ehr",
+        "wearables"
+      ],
+      "notes": "Design and premarket recommendations for devices that exchange data (EHR, wearables, APIs): interface specification, verification, and labeling. Use when the app ingests wearable or EHR data.",
+      "last_verified": "2026-10-23",
+      "verified_via": "fda.gov page opened 2026-10-23; on-page 'Content current as of: 08/30/2018'"
+    },
+    {
+      "id": "software-validation",
+      "title": "General Principles of Software Validation",
+      "status": "Final",
+      "issued": "2002-01",
+      "docket": "FDA-1997-D-0029",
+      "url": "https://www.fda.gov/regulatory-information/search-fda-guidance-documents/general-principles-software-validation",
+      "topics": [
+        "device",
+        "software",
+        "validation",
+        "qms",
+        "legacy"
+      ],
+      "notes": "Still cited for software used in production or the QMS, and for V&V principles. It does not replace the 2023 premarket software content guidance for device software functions.",
+      "last_verified": "2026-10-23",
+      "verified_via": "fda.gov page opened 2026-10-23; on-page 'Content current as of: 05/15/2019'"
+    },
+    {
+      "id": "postmarket-cybersecurity",
+      "title": "Postmarket Management of Cybersecurity in Medical Devices",
+      "status": "Final",
+      "issued": "2016-12",
+      "docket": "FDA-2015-D-5105",
+      "url": "https://www.fda.gov/regulatory-information/search-fda-guidance-documents/postmarket-management-cybersecurity-medical-devices",
+      "topics": [
+        "device",
+        "software",
+        "cyber",
+        "postmarket",
+        "vigilance"
+      ],
+      "notes": "Postmarket expectations: coordinated vulnerability disclosure, patch cadence, risk-based remediation, and 21 CFR 803/806 reporting. Complements the premarket cybersecurity guidance.",
+      "last_verified": "2026-10-23",
+      "verified_via": "fda.gov page opened 2026-10-23; on-page 'Content current as of: 10/01/2018'"
+    },
+    {
       "id": "qmsr-final-rule",
       "title": "Medical Devices; Quality System Regulation Amendments (QMSR final rule)",
       "status": "Final rule",
@@ -407,6 +479,23 @@
       "verified_via": "federalregister.gov document opened 2026-10-23 (HTTP 200)"
     },
     {
+      "id": "imdrf-n10",
+      "title": "IMDRF SaMD N10 — Key Definitions",
+      "status": "Final (international)",
+      "issued": "2013-12",
+      "url": "https://www.imdrf.org/documents/software-medical-device-samd-key-definitions",
+      "topics": [
+        "device",
+        "software",
+        "samd",
+        "definitions",
+        "international"
+      ],
+      "notes": "Defines SaMD as software with a medical purpose that is not part of a hardware device, plus intended use and manufacturer terms. Read N10 before N12/N23/N41 so the vocabulary is stable.",
+      "last_verified": "2026-10-23",
+      "verified_via": "imdrf.org page opened in browser 2026-10-23; page states 'Published date 18 December 2013'"
+    },
+    {
       "id": "imdrf-n12",
       "title": "IMDRF SaMD N12 — Possible Framework for Risk Categorization and Corresponding Considerations",
       "status": "Final (international)",
@@ -423,6 +512,23 @@
       "notes": "The four-category SaMD risk framework (I-III/IV) based on significance of the healthcare situation and the information provided. Useful for a defensible risk narrative, not a substitute for FDA classification.",
       "last_verified": "2026-10-23",
       "verified_via": "imdrf.org page opened in browser 2026-10-23; page states 'Published date 18 September 2014'"
+    },
+    {
+      "id": "imdrf-n23",
+      "title": "IMDRF SaMD N23 — Application of Quality Management System",
+      "status": "Final (international)",
+      "issued": "2015-10",
+      "url": "https://www.imdrf.org/documents/software-medical-device-samd-application-quality-management-system",
+      "topics": [
+        "device",
+        "software",
+        "samd",
+        "qms",
+        "international"
+      ],
+      "notes": "Maps software lifecycle practices onto medical-device QMS expectations. Pairs with QMSR/ISO 13485 clause 7.3 when scoping design controls for a SaMD team.",
+      "last_verified": "2026-10-23",
+      "verified_via": "imdrf.org page opened in browser 2026-10-23; page states 'Published date 2 October 2015'"
     },
     {
       "id": "imdrf-n41",

@@ -345,5 +345,19 @@ class TestDocsMatchCode(unittest.TestCase):
         self.assertEqual(version, reg.VERSION)
 
 
+class TestRetrievalEval(unittest.TestCase):
+    """The retrieval suite is a quality gate, not a code unit — run it here so
+    Windows CI (which skips the shell smoke test) still sees it."""
+
+    def test_retrieval_suite_passes(self) -> None:
+        import eval_retrieval
+
+        reg.kb_init(force=False)
+        cases = eval_retrieval.load_suite(ROOT / "tests" / "evals" / "retrieval.json")
+        results = eval_retrieval.evaluate(cases)
+        failures = [result for result in results if not result["pass"]]
+        self.assertEqual(failures, [], f"retrieval misses: {failures}")
+
+
 if __name__ == "__main__":
     unittest.main()

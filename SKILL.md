@@ -179,7 +179,9 @@ HIPAA compliant" without evidence is not an answer.
 ### Step 5 — Write the memo
 
 Use `references/memo-template.md`. Write to the user's requested path, or to
-`snapshots/YYYY-MM-DD-<slug>-memo.md`. Include:
+`snapshots/YYYY-MM-DD-<slug>-memo.md`. `examples/example-memo-dtc-cbti.md` is a
+complete worked example (synthetic product, real sources) of the format and
+level of reasoning expected. Include:
 
 - Executive summary with the decision.
 - Device analysis and predicate table.
@@ -234,6 +236,7 @@ assumption, and knows the next decision.
 | `references/sleep-domain.md` | CBT-I, endpoints, predicates, trial design, safety |
 | `references/guidance-registry.json` | Curated guidance index with last-verified dates |
 | `references/memo-template.md` | Auditable memo and claims matrix |
+| `examples/example-memo-dtc-cbti.md` | Worked example of the memo format (synthetic product; not evidence) |
 | `knowledge/seed/` | Offline CFR, classification, 510(k), FR seed documents |
 | `scripts/reg.py` | Unified CLI + local knowledge base |
 | `scripts/mcp_server.py` | Optional stdio MCP server |

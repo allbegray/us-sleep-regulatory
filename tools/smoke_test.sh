@@ -106,6 +106,9 @@ assert len(ids[2]["result"]["tools"]) == 16
 print("MCP OK: 16 tools")
 '
 
+echo "== retrieval eval =="
+"$PY" "$DIR/eval_retrieval.py"
+
 echo "== installer checksum =="
 PKG_TMP="$(mktemp -d)"
 tar -czf "$PKG_TMP/skill.tar.gz" -C "$DIR/.." \

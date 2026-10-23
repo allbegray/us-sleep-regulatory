@@ -483,13 +483,13 @@ powershell -ExecutionPolicy Bypass -File "$env:TEMP\us-sleep-install.ps1" `
 
 ```bash
 ./install.sh \
-  --from https://github.com/allbegray/us-sleep-regulatory/releases/download/v1.6.0/us-sleep-regulatory-v1.6.0.tar.gz \
+  --from https://github.com/allbegray/us-sleep-regulatory/releases/download/v1.7.0/us-sleep-regulatory-v1.7.0.tar.gz \
   --target all --force
 ```
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\install.ps1 `
-  -From https://github.com/allbegray/us-sleep-regulatory/releases/download/v1.6.0/us-sleep-regulatory-v1.6.0.zip `
+  -From https://github.com/allbegray/us-sleep-regulatory/releases/download/v1.7.0/us-sleep-regulatory-v1.7.0.zip `
   -Target all -Force
 ```
 
@@ -499,16 +499,16 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1 `
 `install.ps1 -Sha256`은 압축을 풀기 전에 해시를 검증합니다.
 
 ```bash
-SHA="$(curl -fsSL https://github.com/allbegray/us-sleep-regulatory/releases/download/v1.6.0/SHA256SUMS | awk '/tar.gz/{print $1}')"
+SHA="$(curl -fsSL https://github.com/allbegray/us-sleep-regulatory/releases/download/v1.7.0/SHA256SUMS | awk '/tar.gz/{print $1}')"
 ./install.sh \
-  --from https://github.com/allbegray/us-sleep-regulatory/releases/download/v1.6.0/us-sleep-regulatory-v1.6.0.tar.gz \
+  --from https://github.com/allbegray/us-sleep-regulatory/releases/download/v1.7.0/us-sleep-regulatory-v1.7.0.tar.gz \
   --target all --sha256 "$SHA"
 ```
 
 ```powershell
 $SHA = (Get-Content .\SHA256SUMS | Select-String '\.zip').Line.Split()[0]
 powershell -ExecutionPolicy Bypass -File .\install.ps1 `
-  -From .\us-sleep-regulatory-v1.6.0.zip -Target all -Sha256 $SHA
+  -From .\us-sleep-regulatory-v1.7.0.zip -Target all -Sha256 $SHA
 ```
 
 ### 업데이트할 때 보존되는 것
@@ -585,6 +585,10 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1 -Target all -Uninstall
 ├── scripts/reg.py
 ├── scripts/mcp_server.py
 ├── snapshots/
+├── examples/
+├── tests/
+│   ├── test_reg.py
+│   └── evals/retrieval.json
 ├── tools/
 └── .github/workflows/
 ```
@@ -601,6 +605,8 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1 -Target all -Uninstall
 - [references/sleep-domain.md](references/sleep-domain.md) — CBT-I, endpoint,
   predicate, trial design
 - [references/memo-template.md](references/memo-template.md) — 감사 가능한 메모
+- [examples/example-memo-dtc-cbti.md](examples/example-memo-dtc-cbti.md) —
+  완성된 예시 메모(가상 제품, 실제 출처)
 - `knowledge/seed/` — 오프라인 CFR / 510(k) / FR seed 문서
 
 ## 버전 정책
@@ -637,7 +643,8 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1 -Target all -Uninstall
 
 ```bash
 python3 -m unittest discover -s tests -v   # 오프라인, 네트워크 불필요
-bash tools/smoke_test.sh --offline         # 문법, 버전, 레지스트리, KB, MCP, 설치
+python3 tools/eval_retrieval.py            # 15개 질문 -> 기대 문서 id
+bash tools/smoke_test.sh --offline         # 문법, 버전, 레지스트리, KB, eval, MCP, 설치
 bash tools/smoke_test.sh                   # + 7개 공식 소스 연결 확인
 ```
 
@@ -649,6 +656,7 @@ smoke 테스트와 `windows-latest`의 `install.ps1`까지 실행합니다.
 
 - Python 문법
 - guidance registry 구조·상태 어휘·bulk verification 경고
+- 검색 eval 15문항 (기대 문서 top-k 노출)
 - openFDA, eCFR, Federal Register, ClinicalTrials.gov, PubMed, 510(k) PDF (네트워크 모드)
 - MCP `initialize` + `tools/list` (16 tools)
 - Codex/Claude/OpenCode 설치·삭제 (macOS/Linux)

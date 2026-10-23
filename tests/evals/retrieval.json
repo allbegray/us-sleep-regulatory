@@ -1,0 +1,96 @@
+{
+  "version": 1,
+  "description": "Retrieval regression suite. Each query must surface at least one expected document id in the top-k results. These are the questions the skill must answer from the local KB without a network call.",
+  "cases": [
+    {
+      "id": "qvo-classification",
+      "query": "QVO product code classification chronic insomnia",
+      "expect": ["classification-QVO"],
+      "top_k": 5
+    },
+    {
+      "id": "somryst-510k",
+      "query": "Somryst intended use prescription CBT-I",
+      "expect": ["510k-K191716"],
+      "top_k": 5
+    },
+    {
+      "id": "sleepio-510k",
+      "query": "Sleepio clearance digital therapeutic",
+      "expect": ["510k-K233577"],
+      "top_k": 5
+    },
+    {
+      "id": "nightware-denovo",
+      "query": "NightWare nightmare PTSD De Novo",
+      "expect": ["510k-DEN200033"],
+      "top_k": 5
+    },
+    {
+      "id": "hipaa-security-rule",
+      "query": "HIPAA Security Rule administrative safeguards",
+      "expect": ["cfr-45-164.308", "guidance:hipaa-security-rule"],
+      "top_k": 5
+    },
+    {
+      "id": "hipaa-breach",
+      "query": "HIPAA breach notification",
+      "expect": ["cfr-45-164.402", "guidance:hipaa-breach"],
+      "top_k": 5
+    },
+    {
+      "id": "ftc-hbnr",
+      "query": "FTC health breach notification rule",
+      "expect": ["fr-2024-10855", "guidance:ftc-hbnr"],
+      "top_k": 5
+    },
+    {
+      "id": "qmsr-final-rule",
+      "query": "QMSR final rule quality system regulation",
+      "expect": ["fr-2024-01709", "guidance:qmsr-final-rule"],
+      "top_k": 5
+    },
+    {
+      "id": "pccp-ai",
+      "query": "predetermined change control plan AI",
+      "expect": ["fr-2024-28361", "guidance:pccp-ai"],
+      "top_k": 5
+    },
+    {
+      "id": "general-wellness",
+      "query": "general wellness low risk device",
+      "expect": ["guidance:general-wellness"],
+      "top_k": 5
+    },
+    {
+      "id": "cybersecurity",
+      "query": "cybersecurity premarket submission",
+      "expect": ["guidance:cybersecurity"],
+      "top_k": 5
+    },
+    {
+      "id": "samd-clinical-evaluation",
+      "query": "software as a medical device clinical evaluation",
+      "expect": ["guidance:samd-clinical-evaluation", "guidance:imdrf-n41"],
+      "top_k": 5
+    },
+    {
+      "id": "multiple-function",
+      "query": "multiple function device products wellness and treatment",
+      "expect": ["guidance:multiple-function-devices"],
+      "top_k": 5
+    },
+    {
+      "id": "interoperable-wearables",
+      "query": "interoperable medical devices wearable data",
+      "expect": ["guidance:interoperable-devices"],
+      "top_k": 5
+    },
+    {
+      "id": "imdrf-key-definitions",
+      "query": "SaMD key definitions intended purpose",
+      "expect": ["guidance:imdrf-n10"],
+      "top_k": 5
+    }
+  ]
+}

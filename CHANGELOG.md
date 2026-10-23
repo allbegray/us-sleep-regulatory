@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.7.0 — 2026-10-23
+
+- Added six guidance entries (29 → 35): IMDRF N10 (Key Definitions), IMDRF N23
+  (QMS), Multiple Function Device Products (2020), Design Considerations for
+  Interoperable Medical Devices (2017), General Principles of Software
+  Validation (2002), and Postmarket Management of Cybersecurity (2016). Each
+  carries `verified_via` evidence; `validate_registry.py --strict` passes.
+- Added `examples/example-memo-dtc-cbti.md`: a complete worked memo (synthetic
+  DTC CBT-I product, real public sources) showing claim discipline, predicate
+  reasoning, QVO special controls, HIPAA posture, and a source table.
+- Added a retrieval regression suite: `tests/evals/retrieval.json` and
+  `tools/eval_retrieval.py`. Fifteen questions must surface the expected
+  document in the top 5 (currently 15/15, MRR 0.97). It runs offline and is
+  wired into the smoke test and unit tests, so seed/ranking changes regress
+  loudly.
+- README/SKILL layout and verification docs updated for examples and the eval.
+
 ## 1.6.0 — 2026-10-23
 
 - Verified all 29 guidance-registry entries against their sources and added
