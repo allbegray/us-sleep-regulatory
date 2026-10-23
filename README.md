@@ -1,5 +1,7 @@
 # US Sleep Regulatory
 
+**English** | [한국어](README.ko.md)
+
 A distributable Agent Skill for researching US FDA 510(k)/De Novo, SaMD, AI/ML
 device software, QMSR, and HIPAA/FTC obligations for an app-based sleep-therapy
 clinical service.
@@ -53,10 +55,50 @@ cd us-sleep-regulatory
 | `codex-legacy` | `~/.codex/skills/...` | none | older Codex builds |
 | `PATH` | explicit directory | none | custom |
 
-### Update / uninstall
+### Update
+
+Re-run the installer with `--force`. It replaces the skill files and backs up
+and restores `snapshots/`:
 
 ```bash
+curl -fsSL https://raw.githubusercontent.com/allbegray/us-sleep-regulatory/main/install.sh \
+  | US_SLEEP_REG_REPO=allbegray/us-sleep-regulatory bash -s -- --target all --force
+```
+
+From a clone:
+
+```bash
+git pull
 ./install.sh --target all --force
+```
+
+Pin a version:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/allbegray/us-sleep-regulatory/main/install.sh \
+  | US_SLEEP_REG_REPO=allbegray/us-sleep-regulatory US_SLEEP_REG_VERSION=1.0.0 \
+    bash -s -- --target all --force
+```
+
+Or install a specific release tarball:
+
+```bash
+./install.sh \
+  --from https://github.com/allbegray/us-sleep-regulatory/releases/download/v1.1.0/us-sleep-regulatory-v1.1.0.tar.gz \
+  --target all --force
+```
+
+Verify after an update:
+
+```bash
+REG="$HOME/.agents/skills/us-sleep-regulatory/scripts/reg.py"
+cat "$HOME/.agents/skills/us-sleep-regulatory/VERSION"
+python3 "$REG" doctor
+```
+
+Uninstall:
+
+```bash
 ./install.sh --target all --uninstall
 ```
 
@@ -64,21 +106,100 @@ The installer checks Python 3.9+, copies only skill files, skips generated
 snapshots, runs `doctor` unless `--no-doctor`, and prints the MCP config with
 the real path. It never edits your client configuration.
 
-## Invoke
+## Use it in your agent tool
 
 | Client | How |
 |---|---|
-| Codex CLI | `$us-sleep-regulatory` or `/skills` |
+| Codex CLI | `/skills` to list, `$us-sleep-regulatory` to invoke |
 | Claude Code | `@us-sleep-regulatory` |
 | OpenCode | `@us-sleep-regulatory` or just ask |
 | Any MCP client | `scripts/mcp_server.py` (10 tools) |
 
-Example:
+### Codex CLI
 
+1. Restart Codex.
+2. Run `/skills` to confirm the skill is installed.
+3. Invoke it with `$us-sleep-regulatory`, or type `$` and pick it from the list.
+
+```text
+$us-sleep-regulatory 우리 앱이 CBT-I 디지털 치료제인데 QVO 510(k) predicate와
+evidence gap을 정리해줘. DTC 모델이라 prescription-only 요건과 충돌하는지도 봐줘.
 ```
-@us-sleep-regulatory  우리 앱이 미국에서 CBT-I 치료 서비스인데 510(k) 필요한지,
-predicate랑 HIPAA까지 같이 검토해줘.
+
+If it is not visible:
+
+```bash
+test -f "$HOME/.agents/skills/us-sleep-regulatory/SKILL.md" && echo OK
 ```
+
+`OK` means the files are in place; restart Codex. Older builds that only read
+`~/.codex/skills` can use `--target codex-legacy`.
+
+### Claude Code
+
+1. Restart Claude Code.
+2. Mention the skill with `@us-sleep-regulatory`.
+
+```text
+@us-sleep-regulatory 우리 서비스가 HIPAA covered entity인지 business associate인지
+판단하고, PHI 데이터 맵과 BAA 체크리스트를 만들어줘.
+```
+
+If it is not visible:
+
+```bash
+ls -l "$HOME/.claude/skills/us-sleep-regulatory"
+```
+
+The symlink should point at `~/.agents/skills/us-sleep-regulatory`. Restart
+Claude Code after fixing the link.
+
+### OpenCode
+
+1. Restart OpenCode.
+2. Mention `@us-sleep-regulatory`, or just ask a matching regulatory question.
+
+```text
+@us-sleep-regulatory QVO / QMZ / LEL 중 우리 제품에 맞는 product code를 골라줘.
+Somryst와 Sleepio를 predicate로 비교하고, QMSR 기준 evidence gap도 정리해줘.
+```
+
+If it is not visible:
+
+```bash
+ls -l "$HOME/.config/opencode/skills/us-sleep-regulatory"
+ls -l "$HOME/.agents/skills/us-sleep-regulatory"
+```
+
+OpenCode reads both locations; either one with `SKILL.md` is enough.
+
+### MCP client
+
+If the client has no skill system, run the MCP server:
+
+```jsonc
+{
+  "mcp": {
+    "servers": {
+      "us-sleep-reg": {
+        "type": "local",
+        "command": [
+          "python3",
+          "/Users/<you>/.agents/skills/us-sleep-regulatory/scripts/mcp_server.py"
+        ],
+        "cwd": "."
+      }
+    }
+  }
+}
+```
+
+Tools: `fda_510k_search`, `fda_510k_get`, `fda_classification`,
+`fda_predicates`, `ecfr_get`, `fr_search`, `trials_search`, `pubmed_search`,
+`guidance_search`, `regulatory_snapshot`.
+
+The full per-client walkthrough in Korean is in
+[README.ko.md](README.ko.md#설치-후-ai-에이전트에서-사용하기).
 
 ## What it does
 
@@ -124,6 +245,7 @@ python3 "$REG" snapshot
 .
 ├── SKILL.md
 ├── README.md
+├── README.ko.md
 ├── install.sh
 ├── VERSION
 ├── LICENSE
@@ -161,6 +283,26 @@ Add the catalog URL once:
   "skills": ["https://allbegray.github.io/us-sleep-regulatory/"]
 }
 ```
+
+## Versioning
+
+`MAJOR.MINOR.PATCH`:
+
+- **PATCH** — docs, typos, source URL fixes.
+- **MINOR** — new sources, playbooks, CLI options, client support.
+- **MAJOR** — breaking CLI/config/layout changes.
+
+Release checklist:
+
+1. Bump `VERSION` and `install.sh` `DEFAULT_VERSION`.
+2. Add a `CHANGELOG.md` entry.
+3. Run `bash tools/smoke_test.sh`.
+4. Run `bash tools/package.sh`.
+5. Commit, tag `vX.Y.Z`, push. GitHub Actions creates the release and deploys
+   the catalog.
+
+Users update by re-running the one-liner (latest) or setting
+`US_SLEEP_REG_VERSION=X.Y.Z` (pinned).
 
 ## Verify
 

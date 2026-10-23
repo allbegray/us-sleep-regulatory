@@ -1,10 +1,22 @@
 # Changelog
 
+## 1.1.0 — 2026-10-23
+
+- Added Korean README (`README.ko.md`) with install, update, and per-agent
+  usage guides.
+- Added an update guide for the one-liner, clone, and release-tarball flows.
+- Added a post-install usage guide for Codex, Claude Code, OpenCode, MCP
+  clients, and the CLI.
+- Updates now preserve `snapshots/` before replacing the installed skill.
+- Added a version policy and release checklist.
+- The installer now also copies `README.ko.md` into the installed skill.
+
 ## 1.0.0 — 2026-10-23
 
 - Initial public release.
-- Repository layout: skill runtime at the repo root, `tools/` for packaging
-  and smoke tests, and root-level install/version/license files for distribution.
+- Repository layout: `skills/us-sleep-regulatory/` for the skill runtime,
+  `tools/` for packaging and smoke tests, and root-level install/version/license
+  files for distribution.
 - Codex, Claude Code, and OpenCode install support:
   - shared `~/.agents/skills` install
   - `~/.claude/skills` and `~/.config/opencode/skills` symlinks

@@ -26,7 +26,7 @@ set -euo pipefail
 
 SKILL_NAME="us-sleep-regulatory"
 SKILL_DISPLAY="US Sleep Regulatory"
-DEFAULT_VERSION="1.0.0"
+DEFAULT_VERSION="1.1.0"
 REPO_SLUG="${US_SLEEP_REG_REPO:-}"
 VERSION="${US_SLEEP_REG_VERSION:-$DEFAULT_VERSION}"
 if [[ -n "${US_SLEEP_REG_TARBALL:-}" ]]; then
@@ -42,6 +42,7 @@ SRC_DIR=""
 REAL_DEST=""
 LINKS=()
 TMP_DIRS=()
+SNAPSHOT_BACKUP=""
 TARGET="all"
 FROM=""
 FORCE=0
@@ -240,7 +241,6 @@ copy_tree() {
     --exclude='.git' \
     --exclude='.github' \
     --exclude='dist' \
-    --exclude='tools' \
     --exclude='__pycache__' \
     --exclude='*.pyc' \
     --exclude='.DS_Store' \
@@ -251,7 +251,7 @@ copy_tree() {
 
 copy_dist_files() {
   local dest="$1" file
-  for file in README.md LICENSE CHANGELOG.md VERSION install.sh; do
+  for file in README.md README.ko.md LICENSE CHANGELOG.md VERSION install.sh; do
     if [[ -f "$SRC_DIR/$file" ]]; then
       cp -f "$SRC_DIR/$file" "$dest/$file"
     elif [[ -f "$SCRIPT_DIR/$file" ]]; then
@@ -333,10 +333,21 @@ else
     die "already installed at $REAL_DEST (use --force to overwrite)"
   fi
   if [[ "$FORCE" == 1 && -e "$REAL_DEST" ]]; then
+    if [[ -d "$REAL_DEST/snapshots" ]]; then
+      SNAPSHOT_BACKUP="$(mktemp -d)"
+      TMP_DIRS+=("$SNAPSHOT_BACKUP")
+      cp -R "$REAL_DEST/snapshots/." "$SNAPSHOT_BACKUP/"
+      echo "  preserving snapshots"
+    fi
     rm -rf "$REAL_DEST"
   fi
   copy_tree "$SRC_DIR" "$REAL_DEST"
   copy_dist_files "$REAL_DEST"
+  if [[ -n "$SNAPSHOT_BACKUP" ]]; then
+    mkdir -p "$REAL_DEST/snapshots"
+    cp -R "$SNAPSHOT_BACKUP/." "$REAL_DEST/snapshots/"
+    echo "  restored snapshots"
+  fi
   echo "  copied $(find "$REAL_DEST" -type f | wc -l | tr -d ' ') files"
 fi
 
