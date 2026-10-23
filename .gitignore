@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+.DS_Store
+.idea/
+
+# Generated release artifacts
+dist/
+
+# Generated snapshots stay local; keep the directory
+snapshots/*.json
+snapshots/*.md
+!snapshots/.gitkeep

@@ -1,0 +1,6 @@
+interface:
+  display_name: "US Sleep Regulatory"
+  short_description: "FDA 510(k), SaMD, and HIPAA research for sleep therapy"
+  default_prompt: "Research the US FDA 510(k)/De Novo pathway and HIPAA obligations for our app-based sleep therapy service."
+policy:
+  allow_implicit_invocation: true
