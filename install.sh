@@ -26,7 +26,7 @@ set -euo pipefail
 
 SKILL_NAME="us-sleep-regulatory"
 SKILL_DISPLAY="US Sleep Regulatory"
-DEFAULT_VERSION="1.4.1"
+DEFAULT_VERSION="1.5.0"
 REPO_SLUG="${US_SLEEP_REG_REPO:-}"
 VERSION="${US_SLEEP_REG_VERSION:-$DEFAULT_VERSION}"
 if [[ -n "${US_SLEEP_REG_TARBALL:-}" ]]; then

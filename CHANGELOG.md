@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.5.0 — 2026-10-23
+
+- Parallelized official-source fetches in `snapshot` and `kb refresh` using a
+  bounded thread pool (stdlib only; no new dependency).
+- Added `--jobs` (default 6, max 12) and the `US_REG_JOBS` environment variable.
+- Added per-host concurrency limits and 429 `Retry-After` backoff for eCFR,
+  openFDA, Federal Register, ClinicalTrials.gov, PubMed, and accessdata.
+- Cold-cache benchmark on 2026-10-23: `kb refresh` 26.6s -> 13.4s;
+  `snapshot` 21.1s -> 16.5s. `--jobs 1` remains a deterministic sequential run.
+- MCP `kb_refresh` and `regulatory_snapshot` accept a `jobs` argument.
+
 ## 1.4.1 — 2026-10-23
 
 - Added Claude Code desktop troubleshooting: use the Code tab, type the full

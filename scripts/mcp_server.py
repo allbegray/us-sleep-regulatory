@@ -196,11 +196,12 @@ TOOLS: list[dict[str, Any]] = [
     },
     {
         "name": "kb_refresh",
-        "description": "Refresh the local KB from official sources. This is the only KB tool that uses the network. Core refresh is fast; set extended=true for Federal Register/ClinicalTrials/PubMed.",
+        "description": "Refresh the local KB from official sources. This is the only KB tool that uses the network. Fetches run in parallel with per-host rate limits; set extended=true for Federal Register/ClinicalTrials/PubMed.",
         "inputSchema": _schema(
             {
                 "extended": {"type": "boolean", "default": False},
                 "summaries": {"type": "boolean", "default": False},
+                "jobs": {"type": "integer", "minimum": 1, "maximum": 12, "default": 6},
             }
         ),
     },
@@ -217,6 +218,7 @@ TOOLS: list[dict[str, Any]] = [
                 "product_codes": {"type": "array", "items": {"type": "string"}, "default": ["QVO", "QMZ", "LEL"]},
                 "query": {"type": "string", "default": "insomnia"},
                 "out_dir": {"type": "string"},
+                "jobs": {"type": "integer", "minimum": 1, "maximum": 12, "default": 6},
             }
         ),
     },
@@ -253,6 +255,7 @@ def _dispatch(name: str, args: dict[str, Any]) -> dict:
             product_codes=product_codes if isinstance(product_codes, list) else None,
             query=args.get("query", "insomnia"),
             out_dir=args.get("out_dir") or str(reg.SKILL_DIR / "snapshots"),
+            jobs=int(args.get("jobs", reg.DEFAULT_JOBS)),
         )
     if name == "kb_search":
         return reg.kb_search(**pick("query", "limit", "source_type", "status"))
@@ -269,7 +272,11 @@ def _dispatch(name: str, args: dict[str, Any]) -> dict:
             sources=sources if isinstance(sources, list) else None,
         )
     if name == "kb_refresh":
-        return reg.kb_refresh(extended=bool(args.get("extended")), summaries=bool(args.get("summaries")))
+        return reg.kb_refresh(
+            extended=bool(args.get("extended")),
+            summaries=bool(args.get("summaries")),
+            jobs=int(args.get("jobs", reg.DEFAULT_JOBS)),
+        )
     if name == "kb_init":
         return reg.kb_init(force=bool(args.get("force")))
     raise ValueError(f"Unknown tool: {name}")

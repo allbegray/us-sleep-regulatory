@@ -103,9 +103,9 @@ Use live commands only when:
 Refresh the local copy:
 
 ```bash
-python3 "$REG" kb refresh              # CFR, classifications, 510(k), FR
-python3 "$REG" kb refresh --extended   # + FR search, trials, PubMed
-python3 "$REG" kb refresh --summaries  # + 510(k) summary PDFs (needs extractor)
+python3 "$REG" kb refresh --jobs 6              # CFR, classifications, 510(k), FR
+python3 "$REG" kb refresh --extended --jobs 6   # + FR search, trials, PubMed
+python3 "$REG" kb refresh --summaries --jobs 6  # + 510(k) summary PDFs (needs extractor)
 ```
 
 | Content | TTL | Refresh |
@@ -116,6 +116,9 @@ python3 "$REG" kb refresh --summaries  # + 510(k) summary PDFs (needs extractor)
 | Federal Register | 30 days | `kb refresh` |
 | Trials / PubMed | 30 days | `kb refresh --extended` |
 | 510(k) summaries | 90 days | `kb refresh --summaries` |
+
+`--jobs` defaults to 6 (max 12) and parallelizes independent HTTP requests. Use
+`--jobs 1` when you need a deterministic sequential run for debugging.
 
 Live commands, when the KB is insufficient:
 

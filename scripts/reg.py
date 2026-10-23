@@ -48,18 +48,31 @@ import shutil
 import sqlite3
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
-VERSION = "1.0.0"
+VERSION = "1.5.0"
 SKILL_DIR = Path(__file__).resolve().parent.parent
 CACHE_DIR = Path(os.environ.get("US_REG_CACHE", Path.home() / ".cache" / "us-sleep-regulatory"))
 DEFAULT_TTL = int(os.environ.get("US_REG_CACHE_TTL", "86400"))
+DEFAULT_JOBS = int(os.environ.get("US_REG_JOBS", "6"))
+_HOST_LIMITS = {
+    "www.ecfr.gov": 2,
+    "api.fda.gov": 4,
+    "www.federalregister.gov": 3,
+    "clinicaltrials.gov": 3,
+    "eutils.ncbi.nlm.nih.gov": 2,
+    "www.accessdata.fda.gov": 2,
+}
+_HOST_SEMAPHORES: dict[str, threading.Semaphore] = {}
+_HOST_SEM_LOCK = threading.Lock()
 OPENFDA_KEY = os.environ.get("OPENFDA_API_KEY", "").strip()
 NCBI_EMAIL = os.environ.get("NCBI_EMAIL", "").strip()
 
@@ -133,6 +146,15 @@ def _cache_write(key: str, url: str, params: dict | None, body: Any) -> None:
     )
 
 
+def _host_semaphore(host: str) -> threading.Semaphore:
+    with _HOST_SEM_LOCK:
+        semaphore = _HOST_SEMAPHORES.get(host)
+        if semaphore is None:
+            semaphore = threading.Semaphore(_HOST_LIMITS.get(host, 4))
+            _HOST_SEMAPHORES[host] = semaphore
+        return semaphore
+
+
 def _request(
     url: str,
     params: dict | None = None,
@@ -151,37 +173,46 @@ def _request(
             **(headers or {}),
         },
     )
+    host = urllib.parse.urlparse(url).netloc
     last_error: Exception | None = None
     for attempt in range(retries):
-        try:
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
-                data = resp.read()
-                if resp.headers.get("Content-Encoding", "").lower() == "gzip":
-                    data = gzip.decompress(data)
-                return data.decode("utf-8", "replace")
-        except urllib.error.HTTPError as exc:
-            raw = exc.read()
-            if exc.headers.get("Content-Encoding", "").lower() == "gzip":
-                try:
-                    raw = gzip.decompress(raw)
-                except OSError:
-                    pass
-            text = raw.decode("utf-8", "replace")
-            if exc.code == 404 and "NOT_FOUND" in text:
-                raise ApiNotFound(f"No matches: {url}") from exc
-            if exc.code in (429, 500, 502, 503, 504) and attempt < retries - 1:
+        with _host_semaphore(host):
+            try:
+                with urllib.request.urlopen(req, timeout=timeout) as resp:
+                    data = resp.read()
+                    if resp.headers.get("Content-Encoding", "").lower() == "gzip":
+                        data = gzip.decompress(data)
+                    return data.decode("utf-8", "replace")
+            except urllib.error.HTTPError as exc:
+                raw = exc.read()
+                if exc.headers.get("Content-Encoding", "").lower() == "gzip":
+                    try:
+                        raw = gzip.decompress(raw)
+                    except OSError:
+                        pass
+                text = raw.decode("utf-8", "replace")
+                if exc.code == 404 and "NOT_FOUND" in text:
+                    raise ApiNotFound(f"No matches: {url}") from exc
+                if exc.code in (429, 500, 502, 503, 504) and attempt < retries - 1:
+                    last_error = exc
+                    if exc.code == 429:
+                        retry_after = exc.headers.get("Retry-After")
+                        try:
+                            delay = max(1.0, float(retry_after))
+                        except (TypeError, ValueError):
+                            delay = 2.0 * (attempt + 1)
+                    else:
+                        delay = 1.5 ** attempt
+                    time.sleep(delay)
+                    continue
+                raise RegError(f"HTTP {exc.code} for {url}\n{text[:600]}") from exc
+            except urllib.error.URLError as exc:
                 last_error = exc
-                time.sleep(1.5 ** attempt)
-                continue
-            raise RegError(f"HTTP {exc.code} for {url}\n{text[:600]}") from exc
-        except urllib.error.URLError as exc:
-            last_error = exc
-            if attempt < retries - 1:
-                time.sleep(1.5 ** attempt)
-                continue
-            raise RegError(f"Network error for {url}: {exc.reason}") from exc
+                if attempt < retries - 1:
+                    time.sleep(1.5 ** attempt)
+                    continue
+                raise RegError(f"Network error for {url}: {exc.reason}") from exc
     raise RegError(f"Request failed for {url}: {last_error}")
-
 
 def _get_json(
     url: str,
@@ -287,6 +318,29 @@ def _md_table(headers: list[str], rows: list[list[Any]]) -> str:
 
 def _clean(text: str) -> str:
     return re.sub(r"\s+", " ", html.unescape(text or "")).strip()
+
+
+def _run_parallel(tasks: dict[str, Callable[[], Any]], jobs: int = DEFAULT_JOBS) -> tuple[dict[str, Any], dict[str, str]]:
+    """Run independent I/O tasks concurrently and isolate failures.
+
+    A bounded thread pool is the right primitive here: urllib is blocking, the
+    workload is network-bound, and the project stays dependency-free. jobs=1
+    gives a deterministic sequential run for debugging.
+    """
+    jobs = max(1, min(int(jobs or DEFAULT_JOBS), 12))
+    results: dict[str, Any] = {}
+    errors: dict[str, str] = {}
+    if not tasks:
+        return results, errors
+    with ThreadPoolExecutor(max_workers=jobs, thread_name_prefix="reg-http") as pool:
+        future_map = {pool.submit(fn): name for name, fn in tasks.items()}
+        for future in as_completed(future_map):
+            name = future_map[future]
+            try:
+                results[name] = future.result()
+            except Exception as exc:  # noqa: BLE001
+                errors[name] = str(exc)[:400]
+    return results, errors
 
 
 # ---------------------------------------------------------------------------
@@ -592,6 +646,7 @@ def fda_predicates(product_code: str, limit: int = 100, use_cache: bool = True, 
         },
         "product_code": product_code,
         "classification": classification.get("results", []),
+        "classification_meta": classification.get("_meta"),
         "cfr": cfr,
         "count": len(results),
         "latest": latest,
@@ -987,18 +1042,12 @@ def guidance_search(
 # Snapshot
 # ---------------------------------------------------------------------------
 
-def _safe(label: str, fn, *args, **kwargs) -> dict:
-    try:
-        return fn(*args, **kwargs)
-    except Exception as exc:  # noqa: BLE001 - snapshot must survive partial failure
-        return {"_error": f"{label}: {exc}"}
-
-
 def build_snapshot(
     product_codes: list[str] | None = None,
     query: str = "insomnia",
     out_dir: str | Path = "snapshots",
     use_cache: bool = True,
+    jobs: int = DEFAULT_JOBS,
 ) -> dict:
     product_codes = product_codes or ["QVO", "QMZ", "LEL"]
     bundle: dict[str, Any] = {
@@ -1007,6 +1056,7 @@ def build_snapshot(
             "product_codes": product_codes,
             "query": query,
             "tool_version": VERSION,
+            "jobs": jobs,
             "note": "OpenFDA data is a convenience copy; eCFR is official; FDA guidance is nonbinding.",
         },
         "classifications": {},
@@ -1017,58 +1067,77 @@ def build_snapshot(
         "clinical_trials": None,
         "pubmed": None,
     }
-    for code in product_codes:
-        bundle["classifications"][code] = _safe(code, fda_classification, product_code=code, use_cache=use_cache)
-        bundle["predicates"][code] = _safe(code, fda_predicates, product_code=code, use_cache=use_cache)
-    for title, section in [
+
+    cfr_refs = [
         ("21", "882.5801"),
         ("21", "882.5705"),
         ("21", "882.5050"),
         ("21", "820.1"),
         ("45", "164.308"),
         ("45", "164.402"),
-    ]:
-        key = f"{title} CFR {section}"
-        bundle["cfr"][key] = _safe(key, ecfr_get, title, section=section, use_cache=use_cache)
-    bundle["guidance"] = _safe(
-        "guidance",
-        guidance_search,
-        topic=None,
-        max_age_days=365,
-    )
-    bundle["federal_register"]["samd"] = _safe(
-        "fr-samd",
-        fr_search,
+    ]
+    tasks: dict[str, Callable[[], Any]] = {}
+    for code in product_codes:
+        tasks[f"predicates:{code}"] = lambda code=code: fda_predicates(
+            product_code=code, use_cache=use_cache
+        )
+    for title, section in cfr_refs:
+        tasks[f"cfr:{title}:{section}"] = lambda title=title, section=section: ecfr_get(
+            title, section=section, use_cache=use_cache
+        )
+    tasks["guidance"] = lambda: guidance_search(topic=None, max_age_days=365)
+    tasks["fr:samd"] = lambda: fr_search(
         term='"software as a medical device"',
         agency="fda",
         since="2024-01-01",
         limit=20,
         use_cache=use_cache,
     )
-    bundle["federal_register"]["ai"] = _safe(
-        "fr-ai",
-        fr_search,
+    tasks["fr:ai"] = lambda: fr_search(
         term='"artificial intelligence"',
         agency="fda",
         since="2024-01-01",
         limit=20,
         use_cache=use_cache,
     )
-    bundle["clinical_trials"] = _safe(
-        "trials",
-        trials_search,
+    tasks["trials"] = lambda: trials_search(
         condition=query,
         intervention="cognitive behavioral therapy",
         limit=20,
         use_cache=use_cache,
     )
-    bundle["pubmed"] = _safe(
-        "pubmed",
-        pubmed_search,
+    tasks["pubmed"] = lambda: pubmed_search(
         term=f"digital cognitive behavioral therapy {query} randomized",
         limit=20,
         use_cache=use_cache,
     )
+
+    results, errors = _run_parallel(tasks, jobs=jobs)
+
+    for code in product_codes:
+        key = f"predicates:{code}"
+        data = results.get(key)
+        if data:
+            bundle["predicates"][code] = data
+            bundle["classifications"][code] = {
+                "_meta": data.get("classification_meta") or data["_meta"],
+                "results": data.get("classification", []),
+            }
+        else:
+            error = errors.get(key, "unknown error")
+            bundle["predicates"][code] = {"_error": error}
+            bundle["classifications"][code] = {"_error": error}
+
+    for title, section in cfr_refs:
+        key = f"cfr:{title}:{section}"
+        label = f"{title} CFR {section}"
+        bundle["cfr"][label] = results.get(key) or {"_error": errors.get(key, "unknown error")}
+
+    bundle["guidance"] = results.get("guidance") or {"_error": errors.get("guidance", "unknown error")}
+    bundle["federal_register"]["samd"] = results.get("fr:samd") or {"_error": errors.get("fr:samd", "unknown error")}
+    bundle["federal_register"]["ai"] = results.get("fr:ai") or {"_error": errors.get("fr:ai", "unknown error")}
+    bundle["clinical_trials"] = results.get("trials") or {"_error": errors.get("trials", "unknown error")}
+    bundle["pubmed"] = results.get("pubmed") or {"_error": errors.get("pubmed", "unknown error")}
 
     out_path = Path(out_dir)
     out_path.mkdir(parents=True, exist_ok=True)
@@ -1146,11 +1215,21 @@ def build_snapshot(
     ]
     md_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return {
-        "_meta": {"generated_at": bundle["_meta"]["generated_at"], "tool_version": VERSION},
+        "_meta": {"generated_at": bundle["_meta"]["generated_at"], "tool_version": VERSION, "jobs": jobs},
         "json": str(json_path),
         "markdown": str(md_path),
-        "sections": {k: ("ok" if not (isinstance(v, dict) and v.get("_error")) else "error") for k, v in bundle.items() if k != "_meta"},
+        "sections": {k: _section_status(v) for k, v in bundle.items() if k != "_meta"},
     }
+
+
+def _section_status(value: Any) -> str:
+    if isinstance(value, dict):
+        if value.get("_error"):
+            return "error"
+        nested = [item for item in value.values() if isinstance(item, dict)]
+        if nested and all(item.get("_error") for item in nested):
+            return "error"
+    return "ok"
 
 
 # ---------------------------------------------------------------------------
@@ -1982,111 +2061,15 @@ def _kb_source_update(conn: sqlite3.Connection, name: str, status: str, detail: 
     )
 
 
-def _kb_refresh_cfr(conn: sqlite3.Connection) -> int:
-    refs = [
-        ("21", "882.5801", False),
-        ("21", "882.5705", False),
-        ("21", "882.5050", False),
-        ("21", "820.1", False),
-        ("45", "164.308", False),
-        ("45", "164.402", False),
-        ("16", "318", True),
-    ]
-    count = 0
-    errors: list[str] = []
-    for title, ref, is_part in refs:
-        citation = f"{title} CFR Part {ref}" if is_part else f"{title} CFR {ref}"
-        try:
-            doc = ecfr_get(title, part=ref, use_cache=False) if is_part else ecfr_get(title, section=ref, use_cache=False)
-            _kb_upsert(
-                conn,
-                {
-                    "id": f"cfr-{title}-{ref}",
-                    "source": "eCFR",
-                    "source_type": "cfr",
-                    "title": f"{citation} — {doc.get('heading', '')}",
-                    "citation": citation,
-                    "url": doc.get("human_url"),
-                    "retrieved_at": doc["_meta"]["retrieved_at"],
-                    "as_of": doc["_meta"].get("as_of"),
-                    "status": "binding",
-                    "tags": "cfr,binding",
-                    "text": doc.get("text", ""),
-                    "metadata": {"api_url": doc["_meta"].get("url")},
-                    "ttl_days": 90,
-                },
-            )
-            count += 1
-        except Exception as exc:  # noqa: BLE001
-            errors.append(f"{citation}: {exc}"[:300])
-    if errors:
-        raise RegError(f"{count} sections refreshed; " + "; ".join(errors))
-    return count
-
-
-def _kb_refresh_classifications(conn: sqlite3.Connection) -> int:
-    count = 0
-    for code in ("QVO", "QMZ", "LEL"):
-        data = fda_classification(product_code=code, use_cache=False)
-        for record in data.get("results", []):
-            _kb_upsert(
-                conn,
-                {
-                    "id": f"classification-{code}",
-                    "source": "openFDA device/classification",
-                    "source_type": "classification",
-                    "title": f"{code} — {record.get('device_name')}",
-                    "citation": record.get("regulation_number"),
-                    "url": record.get("fda_url"),
-                    "retrieved_at": data["_meta"]["retrieved_at"],
-                    "as_of": data["_meta"].get("openfda_last_updated"),
-                    "status": "data",
-                    "tags": f"device,classification,{code}",
-                    "text": json.dumps(record, ensure_ascii=False, indent=2),
-                    "metadata": {"product_code": code},
-                    "ttl_days": 30,
-                },
-            )
-            count += 1
-    return count
-
-
-def _kb_refresh_510k(conn: sqlite3.Connection) -> int:
-    count = 0
-    for code in ("QVO", "QMZ", "LEL"):
-        data = fda_predicates(product_code=code, use_cache=False)
-        for record in data.get("clearances", []):
-            text = "\n".join(
-                [
-                    f"Device: {record.get('device_name')}",
-                    f"Applicant: {record.get('applicant')}",
-                    f"Product code: {record.get('product_code')}",
-                    f"Decision: {record.get('decision_date')} ({record.get('decision_description')})",
-                    f"Regulation: {record.get('regulation_number')} (Class {record.get('device_class')})",
-                    f"Summary PDF: {record.get('summary_pdf_url') or 'n/a'}",
-                ]
-            )
-            _kb_upsert(
-                conn,
-                {
-                    "id": f"510k-{record['k_number']}",
-                    "source": "openFDA device/510k",
-                    "source_type": "510k",
-                    "title": f"{record['k_number']} — {record.get('device_name')}",
-                    "citation": record["k_number"],
-                    "url": record.get("fda_url"),
-                    "retrieved_at": data["_meta"]["retrieved_at"],
-                    "as_of": record.get("decision_date"),
-                    "status": "data",
-                    "tags": f"device,510k,{code},predicate",
-                    "text": text,
-                    "metadata": record,
-                    "ttl_days": 30,
-                },
-            )
-            count += 1
-    return count
-
+CFR_REFS = [
+    ("21", "882.5801", False),
+    ("21", "882.5705", False),
+    ("21", "882.5050", False),
+    ("21", "820.1", False),
+    ("45", "164.308", False),
+    ("45", "164.402", False),
+    ("16", "318", True),
+]
 
 FR_SEED_TAGS = {
     "2024-01709": "qmsr,quality,binding",
@@ -2098,163 +2081,263 @@ FR_SEED_TAGS = {
 }
 
 
-def _kb_refresh_fr(conn: sqlite3.Connection) -> int:
-    count = 0
-    for document_number, tags in FR_SEED_TAGS.items():
-        data = fr_get(document_number, use_cache=False)["document"]
-        doc_type = data.get("type") or ""
-        status = "binding" if doc_type == "Rule" else "proposed" if "Proposed" in doc_type else "notice"
-        text = "\n\n".join(x for x in [data.get("title"), data.get("abstract")] if x)
-        _kb_upsert(
-            conn,
-            {
-                "id": f"fr-{document_number}",
-                "source": "Federal Register",
-                "source_type": "federal-register",
-                "title": data.get("title") or document_number,
-                "citation": data.get("citation"),
-                "url": data.get("html_url"),
-                "retrieved_at": utcnow(),
-                "as_of": data.get("publication_date"),
-                "status": status,
-                "tags": f"federal-register,{tags}",
-                "text": text,
-                "metadata": {
-                    "document_number": document_number,
-                    "docket_ids": data.get("docket_ids"),
-                },
-                "ttl_days": 30,
-            },
+def _kb_fetch_cfr(title: str, ref: str, is_part: bool) -> dict:
+    doc = ecfr_get(title, part=ref, use_cache=False) if is_part else ecfr_get(title, section=ref, use_cache=False)
+    citation = f"{title} CFR Part {ref}" if is_part else f"{title} CFR {ref}"
+    return {
+        "id": f"cfr-{title}-{ref}",
+        "source": "eCFR",
+        "source_type": "cfr",
+        "title": f"{citation} — {doc.get('heading', '')}",
+        "citation": citation,
+        "url": doc.get("human_url"),
+        "retrieved_at": doc["_meta"]["retrieved_at"],
+        "as_of": doc["_meta"].get("as_of"),
+        "status": "binding",
+        "tags": "cfr,binding",
+        "text": doc.get("text", ""),
+        "metadata": {"api_url": doc["_meta"].get("url")},
+        "ttl_days": 90,
+    }
+
+
+def _kb_fetch_classification(code: str) -> list[dict]:
+    data = fda_classification(product_code=code, use_cache=False)
+    return [
+        {
+            "id": f"classification-{code}",
+            "source": "openFDA device/classification",
+            "source_type": "classification",
+            "title": f"{code} — {record.get('device_name')}",
+            "citation": record.get("regulation_number"),
+            "url": record.get("fda_url"),
+            "retrieved_at": data["_meta"]["retrieved_at"],
+            "as_of": data["_meta"].get("openfda_last_updated"),
+            "status": "data",
+            "tags": f"device,classification,{code}",
+            "text": json.dumps(record, ensure_ascii=False, indent=2),
+            "metadata": {"product_code": code},
+            "ttl_days": 30,
+        }
+        for record in data.get("results", [])
+    ]
+
+
+def _kb_fetch_510k(code: str) -> list[dict]:
+    data = fda_510k_search(product_code=code, limit=100, use_cache=False)
+    docs = []
+    for record in data.get("results", []):
+        text = "\n".join(
+            [
+                f"Device: {record.get('device_name')}",
+                f"Applicant: {record.get('applicant')}",
+                f"Product code: {record.get('product_code')}",
+                f"Decision: {record.get('decision_date')} ({record.get('decision_description')})",
+                f"Regulation: {record.get('regulation_number')} (Class {record.get('device_class')})",
+                f"Summary PDF: {record.get('summary_pdf_url') or 'n/a'}",
+            ]
         )
-        count += 1
-    return count
-
-
-def _kb_refresh_extended(conn: sqlite3.Connection) -> int:
-    count = 0
-    for term in ('"software as a medical device"', '"artificial intelligence"'):
-        data = fr_search(term=term, agency="fda", since="2024-01-01", limit=20, use_cache=False)
-        for record in data.get("results", []):
-            doc_type = record.get("type") or ""
-            status = "binding" if doc_type == "Rule" else "proposed" if "Proposed" in doc_type else "notice"
-            _kb_upsert(
-                conn,
-                {
-                    "id": f"fr-{record.get('document_number')}",
-                    "source": "Federal Register",
-                    "source_type": "federal-register",
-                    "title": record.get("title") or record.get("document_number"),
-                    "citation": record.get("citation"),
-                    "url": record.get("html_url"),
-                    "retrieved_at": data["_meta"]["retrieved_at"],
-                    "as_of": record.get("publication_date"),
-                    "status": status,
-                    "tags": "federal-register,device,software,ai",
-                    "text": "\n\n".join(x for x in [record.get("title"), record.get("abstract")] if x),
-                    "metadata": {"document_number": record.get("document_number")},
-                    "ttl_days": 30,
-                },
-            )
-            count += 1
-
-    trials = trials_search(condition="insomnia", intervention="cognitive behavioral therapy", limit=20, use_cache=False)
-    for record in trials.get("results", []):
-        _kb_upsert(
-            conn,
+        docs.append(
             {
-                "id": f"trial-{record.get('nct_id')}",
-                "source": "ClinicalTrials.gov",
-                "source_type": "trial",
-                "title": f"{record.get('nct_id')} — {record.get('title')}",
-                "citation": record.get("nct_id"),
-                "url": record.get("url"),
-                "retrieved_at": trials["_meta"]["retrieved_at"],
-                "as_of": record.get("start_date"),
-                "status": "data",
-                "tags": "trial,insomnia,cbt-i",
-                "text": json.dumps(record, ensure_ascii=False, indent=2),
-                "metadata": record,
-                "ttl_days": 30,
-            },
-        )
-        count += 1
-
-    pubmed = pubmed_search("digital CBT-I insomnia randomized", limit=20, use_cache=False)
-    for record in pubmed.get("results", []):
-        _kb_upsert(
-            conn,
-            {
-                "id": f"pubmed-{record.get('pmid')}",
-                "source": "PubMed",
-                "source_type": "pubmed",
-                "title": record.get("title") or record.get("pmid"),
-                "citation": record.get("pmid"),
-                "url": record.get("url"),
-                "retrieved_at": pubmed["_meta"]["retrieved_at"],
-                "as_of": record.get("pubdate"),
-                "status": "data",
-                "tags": "pubmed,insomnia,cbt-i",
-                "text": json.dumps(record, ensure_ascii=False, indent=2),
-                "metadata": record,
-                "ttl_days": 30,
-            },
-        )
-        count += 1
-    return count
-
-
-def _kb_refresh_summaries(conn: sqlite3.Connection) -> int:
-    count = 0
-    for k_number in ("K191716", "K233577", "DEN200033"):
-        data = fda_510k_get(k_number, fetch_summary=True, use_cache=False)
-        record = data["results"]
-        text = record.get("summary_text")
-        if not text:
-            continue
-        _kb_upsert(
-            conn,
-            {
-                "id": f"510k-summary-{k_number}",
-                "source": "FDA 510(k) summary",
-                "source_type": "510k-summary",
-                "title": f"{k_number} — {record.get('device_name')} (summary)",
-                "citation": k_number,
-                "url": record.get("summary_pdf_url"),
+                "id": f"510k-{record['k_number']}",
+                "source": "openFDA device/510k",
+                "source_type": "510k",
+                "title": f"{record['k_number']} — {record.get('device_name')}",
+                "citation": record["k_number"],
+                "url": record.get("fda_url"),
                 "retrieved_at": data["_meta"]["retrieved_at"],
                 "as_of": record.get("decision_date"),
                 "status": "data",
-                "tags": "device,510k,summary,predicate",
+                "tags": f"device,510k,{code},predicate",
                 "text": text,
                 "metadata": record,
-                "ttl_days": 90,
-            },
+                "ttl_days": 30,
+            }
         )
-        count += 1
-    return count
+    return docs
 
 
-def kb_refresh(extended: bool = False, summaries: bool = False) -> dict:
+def _kb_fetch_fr(document_number: str, tags: str) -> dict:
+    data = fr_get(document_number, use_cache=False)["document"]
+    doc_type = data.get("type") or ""
+    status = "binding" if doc_type == "Rule" else "proposed" if "Proposed" in doc_type else "notice"
+    text = "\n\n".join(x for x in [data.get("title"), data.get("abstract")] if x)
+    return {
+        "id": f"fr-{document_number}",
+        "source": "Federal Register",
+        "source_type": "federal-register",
+        "title": data.get("title") or document_number,
+        "citation": data.get("citation"),
+        "url": data.get("html_url"),
+        "retrieved_at": utcnow(),
+        "as_of": data.get("publication_date"),
+        "status": status,
+        "tags": f"federal-register,{tags}",
+        "text": text,
+        "metadata": {
+            "document_number": document_number,
+            "docket_ids": data.get("docket_ids"),
+        },
+        "ttl_days": 30,
+    }
+
+
+def _kb_fetch_fr_search(term: str) -> list[dict]:
+    data = fr_search(term=term, agency="fda", since="2024-01-01", limit=20, use_cache=False)
+    docs = []
+    for record in data.get("results", []):
+        doc_type = record.get("type") or ""
+        status = "binding" if doc_type == "Rule" else "proposed" if "Proposed" in doc_type else "notice"
+        docs.append(
+            {
+                "id": f"fr-{record.get('document_number')}",
+                "source": "Federal Register",
+                "source_type": "federal-register",
+                "title": record.get("title") or record.get("document_number"),
+                "citation": record.get("citation"),
+                "url": record.get("html_url"),
+                "retrieved_at": data["_meta"]["retrieved_at"],
+                "as_of": record.get("publication_date"),
+                "status": status,
+                "tags": "federal-register,device,software,ai",
+                "text": "\n\n".join(x for x in [record.get("title"), record.get("abstract")] if x),
+                "metadata": {"document_number": record.get("document_number")},
+                "ttl_days": 30,
+            }
+        )
+    return docs
+
+
+def _kb_fetch_trials() -> list[dict]:
+    trials = trials_search(
+        condition="insomnia",
+        intervention="cognitive behavioral therapy",
+        limit=20,
+        use_cache=False,
+    )
+    return [
+        {
+            "id": f"trial-{record.get('nct_id')}",
+            "source": "ClinicalTrials.gov",
+            "source_type": "trial",
+            "title": f"{record.get('nct_id')} — {record.get('title')}",
+            "citation": record.get("nct_id"),
+            "url": record.get("url"),
+            "retrieved_at": trials["_meta"]["retrieved_at"],
+            "as_of": record.get("start_date"),
+            "status": "data",
+            "tags": "trial,insomnia,cbt-i",
+            "text": json.dumps(record, ensure_ascii=False, indent=2),
+            "metadata": record,
+            "ttl_days": 30,
+        }
+        for record in trials.get("results", [])
+    ]
+
+
+def _kb_fetch_pubmed() -> list[dict]:
+    pubmed = pubmed_search("digital CBT-I insomnia randomized", limit=20, use_cache=False)
+    return [
+        {
+            "id": f"pubmed-{record.get('pmid')}",
+            "source": "PubMed",
+            "source_type": "pubmed",
+            "title": record.get("title") or record.get("pmid"),
+            "citation": record.get("pmid"),
+            "url": record.get("url"),
+            "retrieved_at": pubmed["_meta"]["retrieved_at"],
+            "as_of": record.get("pubdate"),
+            "status": "data",
+            "tags": "pubmed,insomnia,cbt-i",
+            "text": json.dumps(record, ensure_ascii=False, indent=2),
+            "metadata": record,
+            "ttl_days": 30,
+        }
+        for record in pubmed.get("results", [])
+    ]
+
+
+def _kb_fetch_summary(k_number: str) -> dict | None:
+    data = fda_510k_get(k_number, fetch_summary=True, use_cache=False)
+    record = data["results"]
+    text = record.get("summary_text")
+    if not text:
+        return None
+    return {
+        "id": f"510k-summary-{k_number}",
+        "source": "FDA 510(k) summary",
+        "source_type": "510k-summary",
+        "title": f"{k_number} — {record.get('device_name')} (summary)",
+        "citation": k_number,
+        "url": record.get("summary_pdf_url"),
+        "retrieved_at": data["_meta"]["retrieved_at"],
+        "as_of": record.get("decision_date"),
+        "status": "data",
+        "tags": "device,510k,summary,predicate",
+        "text": text,
+        "metadata": record,
+        "ttl_days": 90,
+    }
+
+
+def kb_refresh(extended: bool = False, summaries: bool = False, jobs: int = DEFAULT_JOBS) -> dict:
     conn = _kb_connect()
-    results: dict[str, Any] = {}
+    tasks: dict[str, Callable[[], Any]] = {}
 
-    def group(name: str, fn) -> None:
-        try:
-            count = fn(conn)
-            _kb_source_update(conn, name, "ok", f"{count} documents")
-            results[name] = {"status": "ok", "count": count}
-        except Exception as exc:  # noqa: BLE001
-            _kb_source_update(conn, name, "error", str(exc))
-            results[name] = {"status": "error", "error": str(exc)[:400]}
-
-    group("cfr", _kb_refresh_cfr)
-    group("classification", _kb_refresh_classifications)
-    group("510k", _kb_refresh_510k)
-    group("federal-register", _kb_refresh_fr)
-    group("local", lambda c: sum(_kb_ingest_local(c).values()))
+    for title, ref, is_part in CFR_REFS:
+        tasks[f"cfr:{title}:{ref}"] = lambda t=title, r=ref, p=is_part: _kb_fetch_cfr(t, r, p)
+    for code in ("QVO", "QMZ", "LEL"):
+        tasks[f"classification:{code}"] = lambda c=code: _kb_fetch_classification(c)
+        tasks[f"510k:{code}"] = lambda c=code: _kb_fetch_510k(c)
+    for document_number, tags in FR_SEED_TAGS.items():
+        tasks[f"federal-register:{document_number}"] = lambda d=document_number, tg=tags: _kb_fetch_fr(d, tg)
     if extended:
-        group("extended", _kb_refresh_extended)
+        tasks["extended:fr-samd"] = lambda: _kb_fetch_fr_search('"software as a medical device"')
+        tasks["extended:fr-ai"] = lambda: _kb_fetch_fr_search('"artificial intelligence"')
+        tasks["extended:trials"] = _kb_fetch_trials
+        tasks["extended:pubmed"] = _kb_fetch_pubmed
     if summaries:
-        group("summaries", _kb_refresh_summaries)
+        for k_number in ("K191716", "K233577", "DEN200033"):
+            tasks[f"summaries:{k_number}"] = lambda k=k_number: _kb_fetch_summary(k)
+
+    results, errors = _run_parallel(tasks, jobs=jobs)
+
+    group_totals: dict[str, int] = {}
+    group_failures: dict[str, int] = {}
+    for key in tasks:
+        group = key.split(":", 1)[0]
+        group_totals[group] = group_totals.get(group, 0) + 1
+    for key in errors:
+        group = key.split(":", 1)[0]
+        group_failures[group] = group_failures.get(group, 0) + 1
+
+    group_counts: dict[str, int] = {}
+    for key, value in results.items():
+        group = key.split(":", 1)[0]
+        docs = value if isinstance(value, list) else ([value] if value else [])
+        for doc in docs:
+            _kb_upsert(conn, doc)
+            group_counts[group] = group_counts.get(group, 0) + 1
+
+    local_counts = _kb_ingest_local(conn)
+    group_totals["local"] = 1
+    group_failures["local"] = 0
+    group_counts["local"] = sum(local_counts.values())
+
+    sources: dict[str, Any] = {}
+    for group in sorted(group_totals):
+        total = group_totals[group]
+        failed = group_failures.get(group, 0)
+        status = "ok" if failed == 0 else ("partial" if failed < total else "error")
+        entry: dict[str, Any] = {"status": status, "count": group_counts.get(group, 0)}
+        if failed:
+            messages = [f"{key}: {value}" for key, value in errors.items() if key.split(":", 1)[0] == group]
+            entry["error"] = "; ".join(messages)[:500]
+        sources[group] = entry
+        detail = f"{entry['count']} documents"
+        if failed:
+            detail += f"; {failed}/{total} tasks failed"
+        _kb_source_update(conn, group, status, detail)
 
     _kb_meta_set(conn, "last_refresh", utcnow())
     conn.commit()
@@ -2264,16 +2347,17 @@ def kb_refresh(extended: bool = False, summaries: bool = False) -> dict:
             "source": "local knowledge base refresh",
             "db": str(kb_path()),
             "retrieved_at": utcnow(),
-            "note": "Live refresh completed. Subsequent prompts can use offline kb search.",
+            "jobs": jobs,
+            "note": "Parallel refresh completed. Subsequent prompts can use offline kb search.",
         },
-        "sources": results,
+        "sources": sources,
         "documents": stats["documents"],
         "by_source_type": stats["by_source_type"],
         "stale_count": stats["stale_count"],
     }
     out["_md"] = _md_table(
         ["Source", "Status", "Count / Error"],
-        [[k, v.get("status"), v.get("count") if v.get("status") == "ok" else v.get("error", "")] for k, v in results.items()],
+        [[k, v.get("status"), v.get("count") if v.get("status") == "ok" else v.get("error", "")] for k, v in sources.items()],
     )
     return out
 
@@ -2341,6 +2425,7 @@ def _common_parser() -> argparse.ArgumentParser:
     p.add_argument("--cache-ttl", type=int, default=DEFAULT_TTL, help=f"Cache TTL seconds (default {DEFAULT_TTL}).")
     p.add_argument("--format", choices=["json", "md"], default="json")
     p.add_argument("--out", help="Write full JSON output to this path.")
+    p.add_argument("--jobs", type=int, default=DEFAULT_JOBS, help=f"Parallel HTTP workers (default {DEFAULT_JOBS}, max 12).")
     return p
 
 
@@ -2531,7 +2616,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.kb_command == "init":
             data = kb_init(force=args.force)
         elif args.kb_command == "refresh":
-            data = kb_refresh(extended=args.extended, summaries=args.summaries)
+            data = kb_refresh(extended=args.extended, summaries=args.summaries, jobs=args.jobs)
         elif args.kb_command == "search":
             data = kb_search(args.query, limit=args.limit, source_type=args.source_type, status=args.status)
         elif args.kb_command == "get":
@@ -2569,6 +2654,7 @@ def main(argv: list[str] | None = None) -> int:
             query=args.query,
             out_dir=args.out_dir,
             use_cache=uc,
+            jobs=args.jobs,
         )
     elif args.command == "doctor":
         data = doctor()

@@ -47,6 +47,14 @@ unset US_REG_KB
 rm -rf "$KBDIR"
 echo "KB OK: $HITS hits"
 
+echo "== parallel kb refresh =="
+KBDIR2="$(mktemp -d)"
+US_REG_KB="$KBDIR2/kb.sqlite" "$PY" "$REG" kb refresh --jobs 4 --format md >/dev/null
+COUNT2="$(US_REG_KB="$KBDIR2/kb.sqlite" "$PY" "$REG" kb stats --format json | "$PY" -c 'import json,sys; print(json.load(sys.stdin)["documents"])')"
+[[ "$COUNT2" -ge 50 ]] || { echo "parallel refresh produced only $COUNT2 docs" >&2; exit 1; }
+rm -rf "$KBDIR2"
+echo "parallel refresh OK: $COUNT2 docs"
+
 echo "== MCP handshake =="
 printf '%s\n%s\n' \
   '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}' \

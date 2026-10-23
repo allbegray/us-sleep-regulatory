@@ -87,6 +87,9 @@ py -3 $REG kb search "QVO predicate chronic insomnia"
 py -3 $REG kb get cfr-21-882.5801
 ```
 
+`kb refresh`는 기본 6개 worker로 병렬 조회합니다(콜드 캐시 기준 26.6s → 13.4s,
+2026-10-23 측정). `--jobs 1`은 순차 디버깅용입니다.
+
 API는 다음 경우에만 호출합니다.
 
 - 로컬 KB에 답이 없을 때
@@ -97,9 +100,9 @@ API는 다음 경우에만 호출합니다.
 로컬 KB 갱신:
 
 ```bash
-python3 "$REG" kb refresh              # CFR, classification, 510(k), FR
-python3 "$REG" kb refresh --extended   # + FR search, trials, PubMed
-python3 "$REG" kb refresh --summaries  # + 510(k) summary PDF
+python3 "$REG" kb refresh --jobs 6              # CFR, classification, 510(k), FR
+python3 "$REG" kb refresh --extended --jobs 6   # + FR search, trials, PubMed
+python3 "$REG" kb refresh --summaries --jobs 6  # + 510(k) summary PDF
 ```
 
 세션 후 결론을 로컬 KB에 축적:
@@ -462,13 +465,13 @@ powershell -ExecutionPolicy Bypass -File "$env:TEMP\us-sleep-install.ps1" `
 
 ```bash
 ./install.sh \
-  --from https://github.com/allbegray/us-sleep-regulatory/releases/download/v1.4.0/us-sleep-regulatory-v1.4.0.tar.gz \
+  --from https://github.com/allbegray/us-sleep-regulatory/releases/download/v1.5.0/us-sleep-regulatory-v1.5.0.tar.gz \
   --target all --force
 ```
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\install.ps1 `
-  -From https://github.com/allbegray/us-sleep-regulatory/releases/download/v1.4.0/us-sleep-regulatory-v1.4.0.zip `
+  -From https://github.com/allbegray/us-sleep-regulatory/releases/download/v1.5.0/us-sleep-regulatory-v1.5.0.zip `
   -Target all -Force
 ```
 

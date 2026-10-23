@@ -86,6 +86,9 @@ py -3 $REG kb search "QVO predicate chronic insomnia"
 py -3 $REG kb get cfr-21-882.5801
 ```
 
+`kb refresh` uses 6 parallel workers by default (cold-cache benchmark:
+26.6s → 13.4s on 2026-10-23). Use `--jobs 1` for a sequential debug run.
+
 Call live APIs only when:
 
 - the local KB has no useful hit,
@@ -96,9 +99,9 @@ Call live APIs only when:
 Refresh the local copy:
 
 ```bash
-python3 "$REG" kb refresh              # CFR, classifications, 510(k), FR
-python3 "$REG" kb refresh --extended   # + FR search, trials, PubMed
-python3 "$REG" kb refresh --summaries  # + 510(k) summary PDFs
+python3 "$REG" kb refresh --jobs 6              # CFR, classifications, 510(k), FR
+python3 "$REG" kb refresh --extended --jobs 6   # + FR search, trials, PubMed
+python3 "$REG" kb refresh --summaries --jobs 6  # + 510(k) summary PDFs
 ```
 
 Save durable conclusions after a session:
@@ -441,13 +444,13 @@ Or use a release artifact:
 
 ```bash
 ./install.sh \
-  --from https://github.com/allbegray/us-sleep-regulatory/releases/download/v1.4.0/us-sleep-regulatory-v1.4.0.tar.gz \
+  --from https://github.com/allbegray/us-sleep-regulatory/releases/download/v1.5.0/us-sleep-regulatory-v1.5.0.tar.gz \
   --target all --force
 ```
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\install.ps1 `
-  -From https://github.com/allbegray/us-sleep-regulatory/releases/download/v1.4.0/us-sleep-regulatory-v1.4.0.zip `
+  -From https://github.com/allbegray/us-sleep-regulatory/releases/download/v1.5.0/us-sleep-regulatory-v1.5.0.zip `
   -Target all -Force
 ```
 
