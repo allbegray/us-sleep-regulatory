@@ -29,7 +29,7 @@ for arg in "$@"; do
 done
 
 echo "== syntax =="
-"$PY" -m py_compile "$REG" "$MCP" "$DIR/build_catalog.py" "$DIR/validate_registry.py"
+"$PY" -m py_compile "$REG" "$MCP" "$DIR/build_catalog.py" "$DIR/validate_registry.py" "$DIR/check_freshness.py" "$DIR/eval_retrieval.py"
 
 echo "== unit tests (offline) =="
 "$PY" -m unittest discover -s "$DIR/../tests" -q
@@ -56,6 +56,9 @@ echo "VERSION $VERSION_FILE"
 echo "== guidance registry =="
 "$PY" "$DIR/validate_registry.py" "$DIR/../references/guidance-registry.json"
 "$PY" "$REG" guidance --topic device --format md >/dev/null
+
+echo "== reference freshness =="
+"$PY" "$DIR/check_freshness.py"
 
 if [[ "$OFFLINE" == 0 ]]; then
   echo "== source health =="
@@ -147,11 +150,17 @@ test -L "$TMPHOME/.config/opencode/skills/us-sleep-regulatory"
 test -f "$TMPHOME/.config/opencode/commands/us-sleep-regulatory.md"
 "$PY" "$TMPHOME/.claude/skills/us-sleep-regulatory/scripts/reg.py" guidance --topic device --format md >/dev/null
 US_REG_KB="$TMPHOME/kb.sqlite" "$PY" "$TMPHOME/.claude/skills/us-sleep-regulatory/scripts/reg.py" kb search "QVO" --format md >/dev/null
-HOME="$TMPHOME" bash "$INSTALL" --target all --uninstall >/dev/null
+HOME="$TMPHOME" bash "$INSTALL" --target all --verify >/dev/null
+mkdir -p "$TMPHOME/.cache/us-sleep-regulatory"
+touch "$TMPHOME/.cache/us-sleep-regulatory/kb.sqlite"
+HOME="$TMPHOME" US_REG_CACHE="$TMPHOME/.cache/us-sleep-regulatory" \
+  US_REG_KB="$TMPHOME/.cache/us-sleep-regulatory/kb.sqlite" \
+  bash "$INSTALL" --target all --uninstall --purge --yes >/dev/null
 test ! -e "$TMPHOME/.agents/skills/us-sleep-regulatory"
 test ! -e "$TMPHOME/.claude/skills/us-sleep-regulatory"
 test ! -e "$TMPHOME/.config/opencode/skills/us-sleep-regulatory"
 test ! -e "$TMPHOME/.config/opencode/commands/us-sleep-regulatory.md"
-echo "installer OK: Codex + Claude + OpenCode"
+test ! -e "$TMPHOME/.cache/us-sleep-regulatory"
+echo "installer OK: Codex + Claude + OpenCode (verify, purge)"
 
 echo "SMOKE OK"

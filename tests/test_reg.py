@@ -20,6 +20,7 @@ import sys
 import tempfile
 import time
 import unittest
+from datetime import date
 from pathlib import Path
 from unittest import mock
 
@@ -35,6 +36,7 @@ os.environ["US_REG_KB"] = str(TMP_ROOT / "kb.sqlite")
 
 import mcp_server  # noqa: E402
 import reg  # noqa: E402
+import check_freshness  # noqa: E402
 import validate_registry  # noqa: E402
 
 
@@ -343,6 +345,51 @@ class TestDocsMatchCode(unittest.TestCase):
         self.assertEqual(version, shell.group(1))
         self.assertEqual(version, powershell.group(1))
         self.assertEqual(version, reg.VERSION)
+
+
+class TestFollowedCodes(unittest.TestCase):
+    def tearDown(self) -> None:
+        reg.kb_follow_remove(["QMF"])
+
+    def test_follow_add_list_remove_and_refresh_set(self) -> None:
+        reg.kb_follow_add(["qmf"])
+        listed = [row["product_code"] for row in reg.kb_follow_list()["followed"]]
+        self.assertIn("QMF", listed)
+
+        conn = reg._kb_connect()
+        try:
+            self.assertIn("QMF", reg._refresh_product_codes(conn))
+        finally:
+            conn.close()
+
+        reg.kb_follow_remove(["QMF"])
+        remaining = [row["product_code"] for row in reg.kb_follow_list()["followed"]]
+        self.assertNotIn("QMF", remaining)
+
+    def test_invalid_product_code_rejected(self) -> None:
+        with self.assertRaises(reg.RegError):
+            reg.kb_follow_add(["TOOLONG"])
+
+
+class TestReferenceFreshness(unittest.TestCase):
+    def test_statuses(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            (directory / "fresh.md").write_text("---\nlast_reviewed: 2026-10-01\n---\n# fresh\n", encoding="utf-8")
+            (directory / "stale.md").write_text("---\nlast_reviewed: 2025-01-01\n---\n# stale\n", encoding="utf-8")
+            (directory / "missing.md").write_text("# no frontmatter\n", encoding="utf-8")
+
+            results = {
+                row["file"]: row["status"]
+                for row in check_freshness.evaluate(
+                    sorted(directory.glob("*.md")),
+                    today=date(2026, 10, 23),
+                    cadence=120,
+                )
+            }
+            self.assertEqual(results["fresh.md"], "ok")
+            self.assertEqual(results["stale.md"], "stale")
+            self.assertEqual(results["missing.md"], "missing")
 
 
 class TestRetrievalEval(unittest.TestCase):

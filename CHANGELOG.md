@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.8.0 — 2026-10-23
+
+- Added `kb follow add|remove|list`: track extra FDA product codes beyond
+  QVO/QMZ/LEL. Followed codes are refreshed with classification + 510(k)
+  landscape and stored in KB metadata, so they survive `kb init --force`.
+- Added `install.sh --verify` and `install.ps1 -Verify`: check the real
+  directory, client links, OpenCode wrapper, and installed version.
+- Added `--purge --yes` / `-Purge -Yes` to remove the local KB and HTTP cache
+  (which `--uninstall` deliberately leaves behind).
+- Added a weekly `source-canary` workflow: strict registry validation, strict
+  reference freshness, the networked smoke test, and an issue on failure.
+- Added `last_reviewed` / `review_cadence_days` frontmatter to `references/*.md`
+  and `tools/check_freshness.py`. A 120-day cadence is enforced with
+  `--strict` in the canary and documented in the release checklist.
+- Added `pyproject.toml` (ruff: E/F/W/B), a lint CI job, and fixed the one
+  unused import. Windows CI now exercises `-Sha256` and `-Verify`.
+
 ## 1.7.0 — 2026-10-23
 
 - Added six guidance entries (29 → 35): IMDRF N10 (Key Definitions), IMDRF N23

@@ -20,6 +20,12 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1 -Target all -Force
 powershell -ExecutionPolicy Bypass -File .\install.ps1 -Uninstall
 
 .EXAMPLE
+powershell -ExecutionPolicy Bypass -File .\install.ps1 -Target all -Verify
+
+.EXAMPLE
+powershell -ExecutionPolicy Bypass -File .\install.ps1 -Target all -Uninstall -Purge -Yes
+
+.EXAMPLE
 powershell -ExecutionPolicy Bypass -File .\install.ps1 -From .\us-sleep-regulatory-v1.2.0.zip -Sha256 <hex>
 #>
 [CmdletBinding()]
@@ -33,6 +39,9 @@ param(
     [switch]$Force,
     [switch]$NoDoctor,
     [switch]$Uninstall,
+    [switch]$Verify,
+    [switch]$Purge,
+    [switch]$Yes,
     [switch]$SkipPythonInstall,
     [switch]$ForcePythonInstall,
     [string]$PythonVersion = "3.12.10"
@@ -41,7 +50,7 @@ param(
 $ErrorActionPreference = "Stop"
 $SkillName = "us-sleep-regulatory"
 $SkillDisplay = "US Sleep Regulatory"
-$DefaultVersion = "1.7.0"
+$DefaultVersion = "1.8.0"
 
 $Repo = "allbegray/us-sleep-regulatory"
 if ($env:US_SLEEP_REG_REPO) { $Repo = $env:US_SLEEP_REG_REPO }
@@ -420,6 +429,40 @@ if ($Destination) {
     $dests = @($Target)
 }
 
+if ($Verify) {
+    $present = 0
+    $missing = 0
+    foreach ($dest in $dests) {
+        if (Test-Path -LiteralPath $dest) {
+            Write-Host "  OK  real  $dest"
+            $present++
+        } else {
+            Write-Host "  --  real  $dest"
+            $missing++
+        }
+        $versionFile = Join-Path $dest "VERSION"
+        if (Test-Path -LiteralPath $versionFile) {
+            Write-Host "      version $((Get-Content -LiteralPath $versionFile -Raw).Trim())"
+        }
+    }
+    foreach ($dir in $commandDirs) {
+        $cmd = Join-Path $dir "us-sleep-regulatory.md"
+        if (Test-Path -LiteralPath $cmd) {
+            Write-Host "  OK  cmd   $cmd"
+            $present++
+        } else {
+            Write-Host "  --  cmd   $cmd"
+            $missing++
+        }
+    }
+    Write-Host ""
+    Write-Host "$present present, $missing missing"
+    if ($missing -eq 0) { exit 0 }
+    exit 1
+}
+
+if ($Purge) { $Uninstall = $true }
+
 if ($Uninstall) {
     $removed = 0
     foreach ($dest in $dests) {
@@ -436,7 +479,34 @@ if ($Uninstall) {
             }
         }
     }
-    if ($removed -eq 0) { throw "no installed US Sleep Regulatory skill found for target '$Target'" }
+    if ($removed -eq 0) {
+        if ($Purge) {
+            Write-Host "No installed skill found for target '$Target'; purging data only."
+        } else {
+            throw "no installed US Sleep Regulatory skill found for target '$Target'"
+        }
+    }
+    if ($Purge) {
+        $cacheRoot = $env:US_REG_CACHE
+        if (-not $cacheRoot) { $cacheRoot = Join-Path $BaseDir ".cache\us-sleep-regulatory" }
+        $kbFile = $env:US_REG_KB
+        if (-not $kbFile) { $kbFile = Join-Path $cacheRoot "kb.sqlite" }
+        Write-Host ""
+        if ($Yes) {
+            if (Test-Path -LiteralPath $cacheRoot) {
+                Remove-Item -LiteralPath $cacheRoot -Recurse -Force
+                Write-Host "Purged cache: $cacheRoot"
+            }
+            if ($kbFile -ne (Join-Path $cacheRoot "kb.sqlite") -and (Test-Path -LiteralPath $kbFile)) {
+                Remove-Item -LiteralPath $kbFile -Force
+                Write-Host "Purged KB: $kbFile"
+            }
+        } else {
+            Write-Host "Would purge (re-run with -Yes to delete):"
+            Write-Host "  $cacheRoot"
+            if ($kbFile -ne (Join-Path $cacheRoot "kb.sqlite")) { Write-Host "  $kbFile" }
+        }
+    }
     exit 0
 }
 
@@ -478,7 +548,9 @@ Write-Host "  $py `"$($dests[0])\scripts\reg.py`" predicates --product-code QVO 
 Write-Host "  $py `"$($dests[0])\scripts\reg.py`" doctor"
 Write-Host ""
 Write-Host "Update:    re-run with -Force"
+Write-Host "Verify:    .\install.ps1 -Target $Target -Verify"
 Write-Host "Uninstall: .\install.ps1 -Target $Target -Uninstall"
+Write-Host "Purge:     .\install.ps1 -Target $Target -Uninstall -Purge -Yes"
 
 foreach ($tmp in $TempDirs) {
     Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue

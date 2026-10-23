@@ -1,3 +1,8 @@
+---
+last_reviewed: 2026-10-23
+review_cadence_days: 120
+---
+
 # HIPAA and privacy playbook — app-based sleep clinical service
 
 This is the second track. It is independent of FDA. A product can be an

@@ -1,3 +1,8 @@
+---
+last_reviewed: 2026-10-23
+review_cadence_days: 120
+---
+
 # Regulatory memo template
 
 Use this template for every substantive answer. It is designed to be auditable:

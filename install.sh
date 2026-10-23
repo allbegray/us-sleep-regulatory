@@ -26,7 +26,7 @@ set -euo pipefail
 
 SKILL_NAME="us-sleep-regulatory"
 SKILL_DISPLAY="US Sleep Regulatory"
-DEFAULT_VERSION="1.7.0"
+DEFAULT_VERSION="1.8.0"
 REPO_SLUG="${US_SLEEP_REG_REPO:-}"
 VERSION="${US_SLEEP_REG_VERSION:-$DEFAULT_VERSION}"
 if [[ -n "${US_SLEEP_REG_TARBALL:-}" ]]; then
@@ -49,6 +49,9 @@ FROM=""
 FORCE=0
 RUN_DOCTOR=1
 UNINSTALL=0
+VERIFY=0
+PURGE=0
+YES=0
 EXPECTED_SHA256="${US_SLEEP_REG_SHA256:-}"
 
 cleanup() {
@@ -84,7 +87,10 @@ Options:
   --sha256 HEX          Verify the archive's SHA-256 before installing.
   --force               Overwrite an existing installation or link.
   --no-doctor           Skip the post-install source health check.
+  --verify              Check the installed paths for this target and exit.
   --uninstall           Remove the installed skill from the selected target.
+  --purge               With --uninstall, also remove the local KB and cache.
+  --yes                 Confirm --purge deletion without prompting.
   -h, --help            Show this help.
 
 Environment:
@@ -132,6 +138,29 @@ download_tarball() {
   verify_sha256 "$dest"
 }
 
+purge_data() {
+  local cache_root="${US_REG_CACHE:-$HOME/.cache/us-sleep-regulatory}"
+  local kb_file="${US_REG_KB:-$cache_root/kb.sqlite}"
+  case "$cache_root" in
+    ""|"/"|"$HOME"|"$HOME/") die "refusing to purge unsafe path: $cache_root" ;;
+  esac
+  echo
+  if [[ "$YES" == 1 ]]; then
+    rm -rf "$cache_root"
+    echo "Purged cache: $cache_root"
+    if [[ "$kb_file" != "$cache_root/kb.sqlite" && -e "$kb_file" ]]; then
+      rm -f "$kb_file"
+      echo "Purged KB: $kb_file"
+    fi
+  else
+    echo "Would purge (re-run with --yes to delete):"
+    echo "  $cache_root"
+    if [[ "$kb_file" != "$cache_root/kb.sqlite" ]]; then
+      echo "  $kb_file"
+    fi
+  fi
+}
+
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -149,7 +178,10 @@ while [[ $# -gt 0 ]]; do
     --sha256=*) EXPECTED_SHA256="${1#*=}"; shift ;;
     --force) FORCE=1; shift ;;
     --no-doctor) RUN_DOCTOR=0; shift ;;
+    --verify) VERIFY=1; shift ;;
     --uninstall) UNINSTALL=1; shift ;;
+    --purge) PURGE=1; shift ;;
+    --yes) YES=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) die "unknown option: $1 (try --help)" ;;
   esac
@@ -284,6 +316,7 @@ copy_tree() {
     --exclude='.git' \
     --exclude='.github' \
     --exclude='.idea' \
+    --exclude='.ruff_cache' \
     --exclude='dist' \
     --exclude='__pycache__' \
     --exclude='*.pyc' \
@@ -348,6 +381,42 @@ install_opencode_command() {
 
 resolve_paths
 
+if [[ "$VERIFY" == 1 ]]; then
+  present=0
+  missing=0
+  check_path() {
+    local label="$1" path="$2"
+    if [[ -e "$path" || -L "$path" ]]; then
+      printf "  OK  %-5s %s\n" "$label" "$path"
+      present=$((present + 1))
+    else
+      printf "  --  %-5s %s\n" "$label" "$path"
+      missing=$((missing + 1))
+    fi
+  }
+  echo "Install check: $TARGET"
+  check_path real "$REAL_DEST"
+  if [[ -f "$REAL_DEST/VERSION" ]]; then
+    echo "      version $(cat "$REAL_DEST/VERSION")"
+  fi
+  for link in "${LINKS[@]:-}"; do
+    [[ -n "$link" ]] && check_path link "$link"
+  done
+  if [[ -n "$OPENCODE_COMMANDS_DIR" ]]; then
+    check_path cmd "$OPENCODE_COMMANDS_DIR/us-sleep-regulatory.md"
+  fi
+  echo
+  echo "$present present, $missing missing"
+  if [[ "$missing" == 0 ]]; then
+    exit 0
+  fi
+  exit 1
+fi
+
+if [[ "$PURGE" == 1 ]]; then
+  UNINSTALL=1
+fi
+
 if [[ "$UNINSTALL" == 1 ]]; then
   removed=0
   for path in "$REAL_DEST" "${LINKS[@]:-}"; do
@@ -372,7 +441,16 @@ if [[ "$UNINSTALL" == 1 ]]; then
     echo "Removed: $OPENCODE_COMMANDS_DIR/us-sleep-regulatory.md"
     removed=1
   fi
-  [[ "$removed" == 1 ]] || die "no installed US Sleep Regulatory skill found for target '$TARGET'"
+  if [[ "$removed" == 0 ]]; then
+    if [[ "$PURGE" == 1 ]]; then
+      echo "No installed skill found for target '$TARGET'; purging data only."
+    else
+      die "no installed US Sleep Regulatory skill found for target '$TARGET'"
+    fi
+  fi
+  if [[ "$PURGE" == 1 ]]; then
+    purge_data
+  fi
   exit 0
 fi
 
@@ -459,7 +537,9 @@ MCP config (optional, for any MCP client):
   }
 
 Update:    re-run with --force
+Verify:    ./install.sh --target $TARGET --verify
 Uninstall: ./install.sh --target $TARGET --uninstall
+Purge:     ./install.sh --target $TARGET --uninstall --purge --yes
 EOF
 
 exit 0

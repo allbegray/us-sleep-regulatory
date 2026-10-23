@@ -109,6 +109,17 @@ python3 "$REG" kb refresh --no-cache            # ignore the HTTP cache, fetch l
 `US_REG_CACHE_TTL`), so running it twice in a row is cheap and idempotent. Pass
 `--no-cache` (or `--cache-ttl 0`) when you need every source re-fetched.
 
+Track additional FDA product codes beyond QVO/QMZ/LEL:
+
+```bash
+python3 "$REG" kb follow add QMF
+python3 "$REG" kb follow list
+python3 "$REG" kb follow remove QMF
+```
+
+Followed codes are fetched by the next `kb refresh` (classification + 510(k)
+landscape) and are stored in the KB metadata, so they survive `kb init --force`.
+
 Save durable conclusions after a session:
 
 ```bash
@@ -461,13 +472,13 @@ Or use a release artifact:
 
 ```bash
 ./install.sh \
-  --from https://github.com/allbegray/us-sleep-regulatory/releases/download/v1.7.0/us-sleep-regulatory-v1.7.0.tar.gz \
+  --from https://github.com/allbegray/us-sleep-regulatory/releases/download/v1.8.0/us-sleep-regulatory-v1.8.0.tar.gz \
   --target all --force
 ```
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\install.ps1 `
-  -From https://github.com/allbegray/us-sleep-regulatory/releases/download/v1.7.0/us-sleep-regulatory-v1.7.0.zip `
+  -From https://github.com/allbegray/us-sleep-regulatory/releases/download/v1.8.0/us-sleep-regulatory-v1.8.0.zip `
   -Target all -Force
 ```
 
@@ -477,16 +488,16 @@ Release artifacts ship with `SHA256SUMS`. `install.sh --sha256` and
 `install.ps1 -Sha256` verify the archive before extracting it.
 
 ```bash
-SHA="$(curl -fsSL https://github.com/allbegray/us-sleep-regulatory/releases/download/v1.7.0/SHA256SUMS | awk '/tar.gz/{print $1}')"
+SHA="$(curl -fsSL https://github.com/allbegray/us-sleep-regulatory/releases/download/v1.8.0/SHA256SUMS | awk '/tar.gz/{print $1}')"
 ./install.sh \
-  --from https://github.com/allbegray/us-sleep-regulatory/releases/download/v1.7.0/us-sleep-regulatory-v1.7.0.tar.gz \
+  --from https://github.com/allbegray/us-sleep-regulatory/releases/download/v1.8.0/us-sleep-regulatory-v1.8.0.tar.gz \
   --target all --sha256 "$SHA"
 ```
 
 ```powershell
 $SHA = (Get-Content .\SHA256SUMS | Select-String '\.zip').Line.Split()[0]
 powershell -ExecutionPolicy Bypass -File .\install.ps1 `
-  -From .\us-sleep-regulatory-v1.7.0.zip -Target all -Sha256 $SHA
+  -From .\us-sleep-regulatory-v1.8.0.zip -Target all -Sha256 $SHA
 ```
 
 ### What an update preserves
@@ -526,6 +537,24 @@ py -3 $REG doctor
 powershell -ExecutionPolicy Bypass -File .\install.ps1 -Target all -Uninstall
 ```
 
+`--uninstall` removes the skill but keeps the local KB and HTTP cache.
+`--purge --yes` removes those too (the KB may contain your notes):
+
+```bash
+./install.sh --target all --uninstall --purge --yes
+powershell -ExecutionPolicy Bypass -File .\install.ps1 -Target all -Uninstall -Purge -Yes
+```
+
+### Verify an installation
+
+```bash
+./install.sh --target all --verify
+powershell -ExecutionPolicy Bypass -File .\install.ps1 -Target all -Verify
+```
+
+It checks the real directory, the client symlinks, the OpenCode `/` wrapper,
+and prints the installed version. Exit code 1 means something is missing.
+
 ## What it does
 
 - **FDA device track**: device vs wellness vs CDS, SaMD, product code, predicate,
@@ -553,6 +582,7 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1 -Target all -Uninstall
 ├── VERSION
 ├── LICENSE
 ├── CHANGELOG.md
+├── pyproject.toml
 ├── agents/openai.yaml
 ├── commands/opencode/us-sleep-regulatory.md
 ├── knowledge/seed/
@@ -607,6 +637,7 @@ Release checklist:
    `bash tools/smoke_test.sh --offline`.
 4. Run `bash tools/smoke_test.sh` (network) and `bash tools/package.sh`.
 5. Verify registry entries individually: `python3 tools/validate_registry.py --strict`.
+   Check reference freshness: `python3 tools/check_freshness.py --strict`.
 6. Commit, tag `vX.Y.Z`, push. GitHub Actions tests Linux and Windows, creates the
    release, and deploys the catalog.
 
@@ -615,13 +646,16 @@ Release checklist:
 ```bash
 python3 -m unittest discover -s tests -v   # offline, no fixtures or network
 python3 tools/eval_retrieval.py            # 15 questions -> expected doc ids
+python3 tools/check_freshness.py           # reference review dates
 bash tools/smoke_test.sh --offline         # syntax, versions, registry, KB, evals, MCP, installer
 bash tools/smoke_test.sh                   # + the seven upstream sources
 ```
 
 `--offline` is the PR/CI mode: it skips `doctor` and the live refresh, so a
 flaky FDA endpoint cannot block a merge. The release workflow runs the full
-networked smoke test, and `install.ps1` on `windows-latest`.
+networked smoke test, and `install.ps1` on `windows-latest`. A weekly
+`source-canary` workflow runs the networked suite plus strict registry and
+reference-freshness checks, and opens an issue on failure.
 
 ## License
 

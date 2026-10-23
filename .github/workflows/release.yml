@@ -73,6 +73,9 @@ jobs:
           $env:US_REG_KB = "$base\kb.sqlite"
           python "$base\.agents\skills\us-sleep-regulatory\scripts\reg.py" kb search "QVO predicate" --format md | Out-Null
 
+          .\install.ps1 -Target all -BaseDir $base -Verify
+          if ($LASTEXITCODE -ne 0) { throw "verify failed" }
+
           .\install.ps1 -Target all -BaseDir $base -Uninstall
           foreach ($p in $paths) {
             if (Test-Path -LiteralPath $p) { throw "not removed: $p" }
@@ -89,6 +92,34 @@ jobs:
           if (-not $py) { throw "Python was not installed" }
           & $py.FullName -c "import sys; print(sys.version)"
           .\install.ps1 -Target codex -BaseDir $base -Uninstall
+
+      - name: Checksum verification (local zip)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $pkgDir = Join-Path $env:RUNNER_TEMP "pkg-checksum"
+          New-Item -ItemType Directory -Force -Path $pkgDir | Out-Null
+          $zip = Join-Path $pkgDir "skill.zip"
+          $items = Get-ChildItem -Force | Where-Object { $_.Name -notin @(".git", "dist", ".idea", "__pycache__") }
+          Compress-Archive -Path $items.FullName -DestinationPath $zip -Force
+          $sha = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash
+
+          $okBase = Join-Path $env:RUNNER_TEMP "skill-home-checksum"
+          .\install.ps1 -Target codex -BaseDir $okBase -From $zip -Sha256 $sha -NoDoctor -Force
+          if (-not (Test-Path "$okBase\.agents\skills\us-sleep-regulatory\SKILL.md")) {
+            throw "checksum-verified install produced no skill"
+          }
+          .\install.ps1 -Target codex -BaseDir $okBase -Uninstall
+
+          $badBase = Join-Path $env:RUNNER_TEMP "skill-home-badsum"
+          $rejected = $false
+          try {
+            .\install.ps1 -Target codex -BaseDir $badBase -From $zip -Sha256 ("0" * 64) -NoDoctor -Force
+          } catch {
+            if ($_.Exception.Message -match "checksum mismatch") { $rejected = $true } else { throw }
+          }
+          if (-not $rejected) { throw "installer accepted a bad checksum" }
+
 
   release:
     needs: [linux, windows]

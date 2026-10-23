@@ -110,6 +110,17 @@ python3 "$REG" kb refresh --no-cache            # HTTP 캐시 무시, 라이브 
 재사용합니다. 연속 실행해도 저렴하고 결과가 같으며, 모든 소스를 다시 받아야
 할 때만 `--no-cache`(또는 `--cache-ttl 0`)를 쓰세요.
 
+QVO/QMZ/LEL 외의 product code를 추적하려면:
+
+```bash
+python3 "$REG" kb follow add QMF
+python3 "$REG" kb follow list
+python3 "$REG" kb follow remove QMF
+```
+
+추적 중인 코드는 다음 `kb refresh`에서 classification과 510(k) landscape를
+함께 갱신하며, KB 메타데이터에 저장되어 `kb init --force` 후에도 유지됩니다.
+
 세션 후 결론을 로컬 KB에 축적:
 
 ```bash
@@ -483,13 +494,13 @@ powershell -ExecutionPolicy Bypass -File "$env:TEMP\us-sleep-install.ps1" `
 
 ```bash
 ./install.sh \
-  --from https://github.com/allbegray/us-sleep-regulatory/releases/download/v1.7.0/us-sleep-regulatory-v1.7.0.tar.gz \
+  --from https://github.com/allbegray/us-sleep-regulatory/releases/download/v1.8.0/us-sleep-regulatory-v1.8.0.tar.gz \
   --target all --force
 ```
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\install.ps1 `
-  -From https://github.com/allbegray/us-sleep-regulatory/releases/download/v1.7.0/us-sleep-regulatory-v1.7.0.zip `
+  -From https://github.com/allbegray/us-sleep-regulatory/releases/download/v1.8.0/us-sleep-regulatory-v1.8.0.zip `
   -Target all -Force
 ```
 
@@ -499,16 +510,16 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1 `
 `install.ps1 -Sha256`은 압축을 풀기 전에 해시를 검증합니다.
 
 ```bash
-SHA="$(curl -fsSL https://github.com/allbegray/us-sleep-regulatory/releases/download/v1.7.0/SHA256SUMS | awk '/tar.gz/{print $1}')"
+SHA="$(curl -fsSL https://github.com/allbegray/us-sleep-regulatory/releases/download/v1.8.0/SHA256SUMS | awk '/tar.gz/{print $1}')"
 ./install.sh \
-  --from https://github.com/allbegray/us-sleep-regulatory/releases/download/v1.7.0/us-sleep-regulatory-v1.7.0.tar.gz \
+  --from https://github.com/allbegray/us-sleep-regulatory/releases/download/v1.8.0/us-sleep-regulatory-v1.8.0.tar.gz \
   --target all --sha256 "$SHA"
 ```
 
 ```powershell
 $SHA = (Get-Content .\SHA256SUMS | Select-String '\.zip').Line.Split()[0]
 powershell -ExecutionPolicy Bypass -File .\install.ps1 `
-  -From .\us-sleep-regulatory-v1.7.0.zip -Target all -Sha256 $SHA
+  -From .\us-sleep-regulatory-v1.8.0.zip -Target all -Sha256 $SHA
 ```
 
 ### 업데이트할 때 보존되는 것
@@ -552,6 +563,19 @@ py -3 $REG doctor
 powershell -ExecutionPolicy Bypass -File .\install.ps1 -Target all -Uninstall
 ```
 
+`--uninstall`은 스킬만 제거하고 로컬 KB와 HTTP 캐시는 남깁니다. 노트가 포함된
+KB까지 지우려면 `--purge --yes`(`-Purge -Yes`)를 추가하세요.
+
+**설치 상태 확인:**
+
+```bash
+./install.sh --target all --verify
+powershell -ExecutionPolicy Bypass -File .\install.ps1 -Target all -Verify
+```
+
+실제 디렉토리, 클라이언트 심링크, OpenCode `/` 래퍼, 설치 버전을 확인하고
+누락이 있으면 exit 1을 반환합니다.
+
 ## 스킬이 하는 일
 
 - **FDA device track**: device vs wellness vs CDS, SaMD, product code,
@@ -578,6 +602,7 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1 -Target all -Uninstall
 ├── VERSION
 ├── LICENSE
 ├── CHANGELOG.md
+├── pyproject.toml
 ├── agents/openai.yaml
 ├── commands/opencode/        # OpenCode /us-sleep-regulatory wrapper
 ├── knowledge/seed/           # offline CFR / 510(k) / FR seed
@@ -628,7 +653,8 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1 -Target all -Uninstall
    실행합니다.
 4. `bash tools/smoke_test.sh`(네트워크)와 `bash tools/package.sh`로 tarball, zip,
    checksum, catalog를 만듭니다.
-5. `python3 tools/validate_registry.py --strict`로 registry 항목을 개별 검증합니다.
+5. `python3 tools/validate_registry.py --strict`로 registry 항목을 개별 검증하고,
+   `python3 tools/check_freshness.py --strict`로 references 검토 날짜를 확인합니다.
 6. commit 후 `vX.Y.Z` 태그를 push합니다.
 7. GitHub Actions가 Linux/Windows 테스트 후 Release와 Pages catalog를 배포합니다.
 
@@ -644,13 +670,16 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1 -Target all -Uninstall
 ```bash
 python3 -m unittest discover -s tests -v   # 오프라인, 네트워크 불필요
 python3 tools/eval_retrieval.py            # 15개 질문 -> 기대 문서 id
+python3 tools/check_freshness.py           # references 검토 날짜
 bash tools/smoke_test.sh --offline         # 문법, 버전, 레지스트리, KB, eval, MCP, 설치
 bash tools/smoke_test.sh                   # + 7개 공식 소스 연결 확인
 ```
 
 `--offline`은 PR/CI용 모드입니다. `doctor`와 라이브 refresh를 건너뛰므로
 FDA 엔드포인트 장애가 머지를 막지 않습니다. 릴리스 워크플로는 네트워크
-smoke 테스트와 `windows-latest`의 `install.ps1`까지 실행합니다.
+smoke 테스트와 `windows-latest`의 `install.ps1`까지 실행합니다. 주 1회
+`source-canary` 워크플로가 네트워크 스위트와 strict registry·references
+검사를 돌리고, 실패 시 이슈를 엽니다.
 
 검사 항목:
 

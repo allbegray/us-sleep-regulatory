@@ -26,6 +26,7 @@ tar -C "$SKILL_SRC" \
   --exclude='.git' \
   --exclude='.github' \
   --exclude='.idea' \
+  --exclude='.ruff_cache' \
   --exclude='dist' \
   --exclude='tools' \
   --exclude='tests' \

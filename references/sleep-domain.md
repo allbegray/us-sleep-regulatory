@@ -1,3 +1,8 @@
+---
+last_reviewed: 2026-10-23
+review_cadence_days: 120
+---
+
 # Sleep domain reference — clinical, evidence, and product archetypes
 
 This file keeps the regulatory analysis grounded in the actual clinical model.

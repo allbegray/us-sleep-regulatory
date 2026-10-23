@@ -1,0 +1,10 @@
+[tool.ruff]
+line-length = 120
+target-version = "py39"
+exclude = [".git", ".idea", "dist", "__pycache__"]
+
+[tool.ruff.lint]
+# Start with correctness and bugbear. Style/import sorting can be added once
+# the codebase is quiet under these.
+select = ["E", "F", "W", "B"]
+ignore = ["E501"]

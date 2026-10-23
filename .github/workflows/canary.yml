@@ -1,0 +1,49 @@
+name: source-canary
+
+on:
+  schedule:
+    # Mondays 06:17 UTC. Catches upstream schema drift and stale references
+    # before a release, without blocking PRs.
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  canary:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Reference freshness (strict)
+        run: python3 tools/check_freshness.py --strict
+
+      - name: Registry validation (strict)
+        run: python3 tools/validate_registry.py --strict
+
+      - name: Upstream source health
+        run: |
+          set -o pipefail
+          python3 scripts/reg.py doctor --format md | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Full smoke (network)
+        run: bash tools/smoke_test.sh
+
+      - name: Open an issue on failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          title="[canary] upstream source or freshness failure"
+          body="The weekly canary failed on $(date -u +%Y-%m-%d). Run \`bash tools/smoke_test.sh\` and \`python3 tools/check_freshness.py --strict\` locally. Logs: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          existing=$(gh issue list --state open --search "$title in:title" --json number --jq '.[0].number // empty')
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body "$body"
+          else
+            gh issue create --title "$title" --body "$body"
+          fi

@@ -113,6 +113,15 @@ Refresh reuses HTTP cache entries inside `--cache-ttl` (default 24h,
 `US_REG_CACHE_TTL`), so a second run is cheap and idempotent. `--no-cache` (or
 `--cache-ttl 0`) forces live fetches.
 
+Track product codes beyond QVO/QMZ/LEL. Followed codes are included in the next
+`kb refresh` and survive `kb init --force`:
+
+```bash
+python3 "$REG" kb follow add QMF
+python3 "$REG" kb follow list
+python3 "$REG" kb follow remove QMF
+```
+
 | Content | TTL | Refresh |
 |---|---|---|
 | CFR sections | 90 days | `kb refresh` |

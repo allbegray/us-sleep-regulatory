@@ -58,7 +58,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, Callable
 
-VERSION = "1.7.0"
+VERSION = "1.8.0"
 SKILL_DIR = Path(__file__).resolve().parent.parent
 CACHE_DIR = Path(os.environ.get("US_REG_CACHE", Path.home() / ".cache" / "us-sleep-regulatory"))
 DEFAULT_TTL = int(os.environ.get("US_REG_CACHE_TTL", "86400"))
@@ -1657,6 +1657,7 @@ def _kb_stats_conn(conn: sqlite3.Connection) -> dict[str, Any]:
         "newest": {"age_days": newest[0], "id": newest[1], "retrieved_at": newest[2]} if newest else None,
         "last_init": _kb_meta_get(conn, "last_init"),
         "last_refresh": _kb_meta_get(conn, "last_refresh"),
+        "followed": _kb_followed(conn),
         "fts": _kb_fts_enabled(conn),
     }
 
@@ -2203,6 +2204,96 @@ def _kb_source_update(conn: sqlite3.Connection, name: str, status: str, detail: 
     )
 
 
+FOLLOW_PREFIX = "follow:"
+PRODUCT_CODE_RE = re.compile(r"^[A-Z0-9]{3}$")
+BASE_PRODUCT_CODES = ("QVO", "QMZ", "LEL")
+
+
+def _kb_normalize_codes(codes: list[str]) -> list[str]:
+    normalized: list[str] = []
+    for code in codes:
+        value = (code or "").strip().upper()
+        if not PRODUCT_CODE_RE.match(value):
+            raise RegError(f"Invalid FDA product code: {code!r} (expected 3 letters/digits, e.g. QVO)")
+        if value not in normalized:
+            normalized.append(value)
+    return normalized
+
+
+def _kb_followed(conn: sqlite3.Connection) -> list[str]:
+    rows = conn.execute(
+        "SELECT key FROM meta WHERE key LIKE ? ORDER BY key", (f"{FOLLOW_PREFIX}%",)
+    ).fetchall()
+    return [row["key"].split(":", 1)[1] for row in rows]
+
+
+def _refresh_product_codes(conn: sqlite3.Connection) -> list[str]:
+    """Base codes plus any the user asked `kb follow` to track, deduplicated."""
+    return list(dict.fromkeys(list(BASE_PRODUCT_CODES) + _kb_followed(conn)))
+
+
+def kb_follow_add(codes: list[str]) -> dict:
+    normalized = _kb_normalize_codes(codes)
+    conn = _kb_connect()
+    now = utcnow()
+    for code in normalized:
+        _kb_meta_set(conn, f"{FOLLOW_PREFIX}{code}", now)
+    conn.commit()
+    followed = _kb_followed(conn)
+    conn.close()
+    return {
+        "_meta": {"source": "local knowledge base", "db": str(kb_path()), "retrieved_at": now},
+        "added": normalized,
+        "followed": followed,
+        "_md": _md_table(["Action", "Product code"], [["follow", code] for code in normalized])
+        + "\n\nFollowed: "
+        + ", ".join(followed),
+    }
+
+
+def kb_follow_remove(codes: list[str]) -> dict:
+    normalized = _kb_normalize_codes(codes)
+    conn = _kb_connect()
+    for code in normalized:
+        conn.execute("DELETE FROM meta WHERE key = ?", (f"{FOLLOW_PREFIX}{code}",))
+    conn.commit()
+    followed = _kb_followed(conn)
+    conn.close()
+    return {
+        "_meta": {"source": "local knowledge base", "db": str(kb_path()), "retrieved_at": utcnow()},
+        "removed": normalized,
+        "followed": followed,
+        "_md": _md_table(["Action", "Product code"], [["remove", code] for code in normalized])
+        + "\n\nFollowed: "
+        + (", ".join(followed) or "(none)"),
+    }
+
+
+def kb_follow_list() -> dict:
+    conn = _kb_connect()
+    rows = conn.execute(
+        "SELECT key, value FROM meta WHERE key LIKE ? ORDER BY key", (f"{FOLLOW_PREFIX}%",)
+    ).fetchall()
+    conn.close()
+    followed = [{"product_code": row["key"].split(":", 1)[1], "added_at": row["value"]} for row in rows]
+    return {
+        "_meta": {
+            "source": "local knowledge base",
+            "db": str(kb_path()),
+            "retrieved_at": utcnow(),
+            "note": "Followed codes are refreshed by `kb refresh` alongside QVO/QMZ/LEL.",
+        },
+        "count": len(followed),
+        "followed": followed,
+        "_md": _md_table(
+            ["Product code", "Added"],
+            [[row["product_code"], row["added_at"]] for row in followed],
+        )
+        if followed
+        else "No followed product codes. Add one with `kb follow add QMF`.",
+    }
+
+
 CFR_REFS = [
     ("21", "882.5801", False),
     ("21", "882.5705", False),
@@ -2447,7 +2538,7 @@ def kb_refresh(
         tasks[f"cfr:{title}:{ref}"] = lambda t=title, r=ref, p=is_part: _kb_fetch_cfr(
             t, r, p, use_cache=use_cache, ttl=ttl
         )
-    for code in ("QVO", "QMZ", "LEL"):
+    for code in _refresh_product_codes(conn):
         tasks[f"classification:{code}"] = lambda c=code: _kb_fetch_classification(
             c, use_cache=use_cache, ttl=ttl
         )
@@ -2533,6 +2624,7 @@ def kb_refresh(
         "documents": stats["documents"],
         "by_source_type": stats["by_source_type"],
         "stale_count": stats["stale_count"],
+        "product_codes": _refresh_product_codes(conn),
     }
     out["_md"] = _md_table(
         ["Source", "Status", "Count / Error"],
@@ -2727,6 +2819,14 @@ def main(argv: list[str] | None = None) -> int:
     kp = kb_sub.add_parser("stale", parents=[common], help="List stale local documents.")
     kp.add_argument("--days", type=int)
 
+    kp = kb_sub.add_parser("follow", help="Track extra FDA product codes in kb refresh.")
+    follow_sub = kp.add_subparsers(dest="follow_command", required=True)
+    fp = follow_sub.add_parser("add", parents=[common], help="Follow one or more product codes.")
+    fp.add_argument("codes", nargs="+")
+    fp = follow_sub.add_parser("remove", parents=[common], help="Stop following product codes.")
+    fp.add_argument("codes", nargs="+")
+    follow_sub.add_parser("list", parents=[common], help="List followed product codes.")
+
     kp = kb_sub.add_parser("note", help="Add or list local research notes.")
     note_sub = kp.add_subparsers(dest="note_command", required=True)
     np = note_sub.add_parser("add", parents=[common], help="Add a note with citations.")
@@ -2828,6 +2928,13 @@ def main(argv: list[str] | None = None) -> int:
             data = kb_stats()
         elif args.kb_command == "stale":
             data = kb_stale(days=args.days)
+        elif args.kb_command == "follow":
+            if args.follow_command == "add":
+                data = kb_follow_add(args.codes)
+            elif args.follow_command == "remove":
+                data = kb_follow_remove(args.codes)
+            else:
+                data = kb_follow_list()
         elif args.kb_command == "note":
             if args.note_command == "add":
                 data = kb_note_add(args.text, title=args.title, tags=args.tags, sources=args.source)

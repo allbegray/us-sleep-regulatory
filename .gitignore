@@ -10,3 +10,7 @@ dist/
 snapshots/*.json
 snapshots/*.md
 !snapshots/.gitkeep
+
+# Local virtualenvs
+.venv/
+.ruff_cache/

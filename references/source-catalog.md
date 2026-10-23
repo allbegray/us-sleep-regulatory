@@ -1,3 +1,8 @@
+---
+last_reviewed: 2026-10-23
+review_cadence_days: 120
+---
+
 # Source catalog — verified 2026-10-23
 
 This is the retrieval layer. It exists so the agent stops guessing URLs, query

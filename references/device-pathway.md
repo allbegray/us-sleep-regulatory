@@ -1,3 +1,8 @@
+---
+last_reviewed: 2026-10-23
+review_cadence_days: 120
+---
+
 # Device pathway playbook — app-based sleep therapy
 
 Use this when the question is "do we need FDA clearance, and if so which
