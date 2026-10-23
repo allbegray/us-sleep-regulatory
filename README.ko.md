@@ -160,6 +160,13 @@ codex-legacy`를 사용합니다.
 Get-ChildItem "$env:USERPROFILE\.claude\skills\us-sleep-regulatory"
 ```
 
+**Claude Code 데스크탑:** **Code** 탭(로컬 세션)을 사용하세요. Cowork 탭은
+`~/.claude/skills`를 읽지 않습니다. 로컬 세션은 읽습니다. `/` 피커에 스킬이
+안 보이면 `/us-sleep-regulatory`를 끝까지 직접 입력하고 Enter를 누르세요.
+알려진 데스크탑 피커 회귀이며, 명령은 정상 실행됩니다. 세션이 열린 상태에서
+설치했다면 `/reload-skills`를 실행하세요. Cowork/클라우드 세션이면 claude.ai
+계정에 스킬을 활성화하거나 Code 탭을 사용하세요.
+
 ### OpenCode
 
 1. OpenCode를 재시작합니다.

@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.4.1 — 2026-10-23
+
+- Added Claude Code desktop troubleshooting: use the Code tab, type the full
+  `/us-sleep-regulatory` command when the `/` picker hides local skills, and run
+  `/reload-skills` if the skill was installed during a session.
+- Clarified that Cowork/cloud sessions do not read `~/.claude/skills`; enable
+  the skill for the claude.ai account or use the Code tab.
+
 ## 1.4.0 — 2026-10-23
 
 - Windows installer now auto-installs Python 3.12 per-user from python.org when

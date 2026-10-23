@@ -160,6 +160,14 @@ If it is not visible:
 Get-ChildItem "$env:USERPROFILE\.claude\skills\us-sleep-regulatory"
 ```
 
+**Claude Code desktop:** use the **Code** tab (a local session), not Cowork.
+Local sessions read `~/.claude/skills`. If the `/` picker does not show the
+skill, type `/us-sleep-regulatory` in full and press Enter; this is a known
+desktop picker regression, and the skill still runs. Run `/reload-skills` if you
+installed it while a session was open. Cowork/cloud sessions do not read
+`~/.claude/skills`; enable the skill for your claude.ai account or use the Code
+tab.
+
 ### OpenCode
 
 1. Restart OpenCode.
