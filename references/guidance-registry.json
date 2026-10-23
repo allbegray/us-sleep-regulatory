@@ -314,6 +314,89 @@
       "verified_via": "fda.gov page opened 2026-10-23; on-page 'Content current as of: 10/01/2018'"
     },
     {
+      "id": "fda-q-submission",
+      "title": "Requests for Feedback and Meetings for Medical Device Submissions: The Q-Submission Program",
+      "status": "Final",
+      "issued": "2025-05",
+      "docket": "FDA-2018-D-1774",
+      "url": "https://www.fda.gov/regulatory-information/search-fda-guidance-documents/requests-feedback-and-meetings-medical-device-submissions-q-submission-program",
+      "topics": [
+        "device",
+        "submission",
+        "premarket",
+        "fda"
+      ],
+      "notes": "Pre-submission meetings and written feedback. Use before a 510(k)/De Novo to confirm intended use, predicate strategy, and test plans; a Q-Sub is not a clearance.",
+      "last_verified": "2026-10-23",
+      "verified_via": "fda.gov page opened 2026-10-23; on-page 'Content current as of: 05/28/2025'"
+    },
+    {
+      "id": "fda-de-novo",
+      "title": "De Novo Classification Process (Evaluation of Automatic Class III Designation)",
+      "status": "Final",
+      "issued": "2021-10",
+      "docket": "FDA-2011-D-0689",
+      "url": "https://www.fda.gov/regulatory-information/search-fda-guidance-documents/de-novo-classification-process-evaluation-automatic-class-iii-designation",
+      "topics": [
+        "device",
+        "pathway",
+        "premarket",
+        "classification"
+      ],
+      "notes": "For a novel intended use with no valid predicate at low-to-moderate risk. A granted De Novo creates a new classification and product code, which later devices can use as a predicate.",
+      "last_verified": "2026-10-23",
+      "verified_via": "fda.gov page opened 2026-10-23; on-page 'Content current as of: 10/05/2021'"
+    },
+    {
+      "id": "fda-513g",
+      "title": "FDA and Industry Procedures for Section 513(g) Requests for Information",
+      "status": "Final",
+      "issued": "2024-08",
+      "docket": "FDA-2010-D-0153",
+      "url": "https://www.fda.gov/regulatory-information/search-fda-guidance-documents/fda-and-industry-procedures-section-513g-requests-information-under-federal-food-drug-and-cosmetic",
+      "topics": [
+        "device",
+        "classification",
+        "premarket"
+      ],
+      "notes": "FDA's written view on classification and applicable requirements (60-day response, user fee). Not a clearance, and not a substitute for a Q-Sub on test plans.",
+      "last_verified": "2026-10-23",
+      "verified_via": "fda.gov page opened 2026-10-23; page dated August 2024"
+    },
+    {
+      "id": "fda-mdds",
+      "title": "Medical Device Data Systems, Medical Image Storage Devices, and Medical Image Communications Devices",
+      "status": "Final",
+      "issued": "2022-09",
+      "docket": "FDA-2014-D-0798",
+      "url": "https://www.fda.gov/regulatory-information/search-fda-guidance-documents/medical-device-data-systems-medical-image-storage-devices-and-medical-image-communications-devices",
+      "topics": [
+        "device",
+        "software",
+        "data",
+        "exemption"
+      ],
+      "notes": "MDDS are Class I, 510(k)-exempt devices limited to storing/transmitting data. Active monitoring, analysis, or clinical decision support moves the product out of this exemption.",
+      "last_verified": "2026-10-23",
+      "verified_via": "fda.gov page opened 2026-10-23; on-page 'Content current as of: 09/28/2022'"
+    },
+    {
+      "id": "fda-breakthrough",
+      "title": "Breakthrough Devices Program",
+      "status": "Final",
+      "issued": "2023-09",
+      "docket": "FDA-2017-D-5966",
+      "url": "https://www.fda.gov/regulatory-information/search-fda-guidance-documents/breakthrough-devices-program",
+      "topics": [
+        "device",
+        "pathway",
+        "expedited"
+      ],
+      "notes": "Expedited review for life-threatening or seriously debilitating conditions, with interactive review and prioritized resources. Optional, and it does not lower the evidence bar.",
+      "last_verified": "2026-10-23",
+      "verified_via": "fda.gov page opened 2026-10-23; on-page 'Content current as of: 09/14/2023'"
+    },
+    {
       "id": "qmsr-final-rule",
       "title": "Medical Devices; Quality System Regulation Amendments (QMSR final rule)",
       "status": "Final rule",
@@ -460,6 +543,38 @@
       "verified_via": "ecfr.gov page opened 2026-10-23 (HTTP 200)"
     },
     {
+      "id": "ocr-risk-analysis",
+      "title": "Guidance on Risk Analysis Requirements under the HIPAA Security Rule",
+      "status": "Final",
+      "issued": "2010-07",
+      "url": "https://www.hhs.gov/hipaa/for-professionals/security/guidance/guidance-risk-analysis/index.html",
+      "topics": [
+        "hipaa",
+        "security",
+        "risk",
+        "compliance"
+      ],
+      "notes": "OCR's risk analysis guidance for 45 CFR 164.308(a)(1)(ii)(A); the most common Security Rule audit finding. Covers scope, threats, likelihood, impact, and documentation.",
+      "last_verified": "2026-10-23",
+      "verified_via": "hhs.gov page opened 2026-10-23; 'Content last reviewed August 12, 2026'"
+    },
+    {
+      "id": "ocr-cloud-computing",
+      "title": "Guidance on HIPAA and Cloud Computing",
+      "status": "Final",
+      "issued": "2016-10",
+      "url": "https://www.hhs.gov/hipaa/for-professionals/special-topics/health-information-technology/cloud-computing/index.html",
+      "topics": [
+        "hipaa",
+        "cloud",
+        "baa",
+        "security"
+      ],
+      "notes": "Cloud service providers are business associates even when they store only encrypted ePHI without a key; a BAA is required. Covers no-view services, SLAs, and cross-border storage.",
+      "last_verified": "2026-10-23",
+      "verified_via": "hhs.gov page opened 2026-10-23; 'Content last reviewed December 23, 2022'"
+    },
+    {
       "id": "ftc-hbnr",
       "title": "16 CFR Part 318 — Health Breach Notification Rule",
       "status": "Final rule",
@@ -477,6 +592,22 @@
       "notes": "89 FR 47028. Applies to vendors of personal health records and related entities not covered by HIPAA. The FTC's 2024 amendments confirm that health apps can be covered. Check if the DTC app is outside HIPAA.",
       "last_verified": "2026-10-23",
       "verified_via": "federalregister.gov document opened 2026-10-23 (HTTP 200)"
+    },
+    {
+      "id": "ftc-health-products",
+      "title": "Health Products Compliance Guidance",
+      "status": "Business guidance",
+      "issued": "2022-12",
+      "url": "https://www.ftc.gov/business-guidance/resources/health-products-compliance-guidance",
+      "topics": [
+        "ftc",
+        "claims",
+        "advertising",
+        "substantiation"
+      ],
+      "notes": "Competent and reliable scientific evidence for health claims, including health apps. Use with the claims matrix; FTC applies to marketing that sits outside FDA labeling.",
+      "last_verified": "2026-10-23",
+      "verified_via": "ftc.gov page opened 2026-10-23; title 'Health Products Compliance Guidance'"
     },
     {
       "id": "imdrf-n10",
@@ -550,6 +681,22 @@
       "verified_via": "imdrf.org page opened in browser 2026-10-23; page states 'Published date 21 September 2017'"
     },
     {
+      "id": "aasm-cbti",
+      "title": "AASM Clinical Practice Guideline: Behavioral and Psychological Treatments for Chronic Insomnia Disorder in Adults",
+      "status": "Clinical guideline",
+      "issued": "2021-02",
+      "url": "https://doi.org/10.5664/jcsm.8986",
+      "topics": [
+        "sleep",
+        "cbti",
+        "clinical",
+        "guideline"
+      ],
+      "notes": "Strong recommendation for multicomponent CBT-I in adults. Sleep restriction has contraindications (high-risk occupations, mania/hypomania, poorly controlled seizures); single-component sleep hygiene is not recommended.",
+      "last_verified": "2026-10-23",
+      "verified_via": "JCSM article opened 2026-10-23 (DOI 10.5664/jcsm.8986); published 2021-02"
+    },
+    {
       "id": "fda-ai-device-list",
       "title": "FDA AI-Enabled Medical Device List",
       "status": "Live database",
@@ -602,6 +749,22 @@
       "notes": "Practical implementation guide for the Security Rule. Use it to structure the risk analysis and safeguard evidence, not as a legal safe harbor.",
       "last_verified": "2026-10-23",
       "verified_via": "csrc.nist.gov page opened 2026-10-23 (HTTP 200)"
+    },
+    {
+      "id": "hhs-405d",
+      "title": "HHS 405(d) Health Industry Cybersecurity Practices (HICP) and Cyber Gateway",
+      "status": "Program / portal",
+      "issued": "2023",
+      "url": "https://405d.hhs.gov/",
+      "topics": [
+        "hipaa",
+        "security",
+        "cyber",
+        "program"
+      ],
+      "notes": "HICP (2023 edition) and the Cyber Gateway: implementation practices for the Security Rule. Use as evidence for safeguards, not as a binding standard.",
+      "last_verified": "2026-10-23",
+      "verified_via": "405d.hhs.gov opened 2026-10-23; page links 'HICP 2023'"
     },
     {
       "id": "digital-health-guidances",

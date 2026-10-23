@@ -47,6 +47,9 @@ VALID_STATUSES = {
     "Live database",
     "Live index",
     "Live tool",
+    "Business guidance",
+    "Clinical guideline",
+    "Program / portal",
 }
 
 ISSUED_RE = re.compile(r"^(current|\d{4}(-\d{2}(-\d{2})?)?)$")

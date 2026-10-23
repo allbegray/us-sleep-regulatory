@@ -494,13 +494,13 @@ powershell -ExecutionPolicy Bypass -File "$env:TEMP\us-sleep-install.ps1" `
 
 ```bash
 ./install.sh \
-  --from https://github.com/allbegray/us-sleep-regulatory/releases/download/v1.8.0/us-sleep-regulatory-v1.8.0.tar.gz \
+  --from https://github.com/allbegray/us-sleep-regulatory/releases/download/v1.9.0/us-sleep-regulatory-v1.9.0.tar.gz \
   --target all --force
 ```
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\install.ps1 `
-  -From https://github.com/allbegray/us-sleep-regulatory/releases/download/v1.8.0/us-sleep-regulatory-v1.8.0.zip `
+  -From https://github.com/allbegray/us-sleep-regulatory/releases/download/v1.9.0/us-sleep-regulatory-v1.9.0.zip `
   -Target all -Force
 ```
 
@@ -510,16 +510,16 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1 `
 `install.ps1 -Sha256`은 압축을 풀기 전에 해시를 검증합니다.
 
 ```bash
-SHA="$(curl -fsSL https://github.com/allbegray/us-sleep-regulatory/releases/download/v1.8.0/SHA256SUMS | awk '/tar.gz/{print $1}')"
+SHA="$(curl -fsSL https://github.com/allbegray/us-sleep-regulatory/releases/download/v1.9.0/SHA256SUMS | awk '/tar.gz/{print $1}')"
 ./install.sh \
-  --from https://github.com/allbegray/us-sleep-regulatory/releases/download/v1.8.0/us-sleep-regulatory-v1.8.0.tar.gz \
+  --from https://github.com/allbegray/us-sleep-regulatory/releases/download/v1.9.0/us-sleep-regulatory-v1.9.0.tar.gz \
   --target all --sha256 "$SHA"
 ```
 
 ```powershell
 $SHA = (Get-Content .\SHA256SUMS | Select-String '\.zip').Line.Split()[0]
 powershell -ExecutionPolicy Bypass -File .\install.ps1 `
-  -From .\us-sleep-regulatory-v1.8.0.zip -Target all -Sha256 $SHA
+  -From .\us-sleep-regulatory-v1.9.0.zip -Target all -Sha256 $SHA
 ```
 
 ### 업데이트할 때 보존되는 것
@@ -669,7 +669,7 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1 -Target all -Verify
 
 ```bash
 python3 -m unittest discover -s tests -v   # 오프라인, 네트워크 불필요
-python3 tools/eval_retrieval.py            # 15개 질문 -> 기대 문서 id
+python3 tools/eval_retrieval.py            # 25개 질문 -> 기대 문서 id
 python3 tools/check_freshness.py           # references 검토 날짜
 bash tools/smoke_test.sh --offline         # 문법, 버전, 레지스트리, KB, eval, MCP, 설치
 bash tools/smoke_test.sh                   # + 7개 공식 소스 연결 확인

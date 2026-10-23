@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.9.0 — 2026-10-23
+
+- Added ten sources (35 → 45 registry entries), each verified in a browser with
+  `verified_via` evidence:
+  - FDA procedural: Q-Submission Program (2025-05), De Novo Classification
+    Process (2021-10), 513(g) Requests (2024-08), Medical Device Data Systems
+    (2022-09), Breakthrough Devices Program (2023-09).
+  - Privacy/clinical: OCR Guidance on Risk Analysis (2010-07), OCR Guidance on
+    HIPAA and Cloud Computing (2016-10), FTC Health Products Compliance
+    Guidance (2022-12), AASM CBT-I Clinical Practice Guideline (2021-02), and
+    HHS 405(d) HICP / Cyber Gateway (2023 edition).
+- Expanded the registry status vocabulary with `Business guidance`,
+  `Clinical guideline`, and `Program / portal`.
+- Retrieval suite grew from 15 to 25 cases (all rank 1, MRR 1.00): Q-Sub,
+  De Novo, 513(g), MDDS, Breakthrough, OCR risk analysis, OCR cloud, FTC
+  claims, AASM CBT-I, and 405(d).
+
 ## 1.8.0 — 2026-10-23
 
 - Added `kb follow add|remove|list`: track extra FDA product codes beyond
